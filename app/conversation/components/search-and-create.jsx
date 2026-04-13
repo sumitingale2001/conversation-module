@@ -34,13 +34,21 @@ const Add = () => {
         }
     };
 
-    const handleInstantRecord = () => {
-        handleCreateConversation({
-            userId: "68189687b95b90b6f3996e75",
-            workspaceId: "681896a0b95b90b6f3996ed7",
-            sourceType: 'instant'
-        })
-        handleClose()
+    const handleInstantRecord = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream.getTracks().forEach(track => track.stop());
+
+            handleCreateConversation({
+                userId: "68189687b95b90b6f3996e75",
+                workspaceId: "681896a0b95b90b6f3996ed7",
+                sourceType: 'instant'
+            });
+        } catch (error) {
+            console.error("Microphone permission denied:", error);
+        } finally {
+            handleClose();
+        }
     }
 
     return (
