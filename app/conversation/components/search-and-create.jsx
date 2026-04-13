@@ -1,7 +1,9 @@
 "use client"
+import useCreateConversation from "../../../hooks/use-create-conversation";
 import { Menu, MenuItem } from "@mui/material"
 import Image from "next/image";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useState, useRef } from "react";
 
 const menuItemSx = {
     fontWeight: 400, fontSize: "12px", lineHeight: "16px", padding: "1rem", gap: 1, height: "22px", borderRadius: "8px", hover: {
@@ -13,6 +15,10 @@ const menuItemSx = {
 const Add = () => {
     const [anchorEl, setAnchorEl] = useState(null);
     const open = Boolean(anchorEl);
+    const fileInputRef = useRef(null);
+    const router = useRouter()
+
+    const { handleCreateConversation, loading } = useCreateConversation()
 
     const handleClick = (event) => {
         setAnchorEl(event.currentTarget);
@@ -20,6 +26,22 @@ const Add = () => {
     const handleClose = () => {
         setAnchorEl(null);
     };
+
+    const handleAddSourceClick = () => {
+        handleClose();
+        if (fileInputRef.current) {
+            fileInputRef.current.click();
+        }
+    };
+
+    const handleInstantRecord = () => {
+        handleCreateConversation({
+            userId: "68189687b95b90b6f3996e75",
+            workspaceId: "681896a0b95b90b6f3996ed7",
+            sourceType: 'instant'
+        })
+        handleClose()
+    }
 
     return (
         <>
@@ -51,15 +73,21 @@ const Add = () => {
                 transformOrigin={{ horizontal: "right", vertical: "top" }}
                 anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
             >
-                <MenuItem sx={menuItemSx} onClick={handleClose}>
-                    <Image src="/mic.svg" alt="mic" width={16} height={16} />
+                <MenuItem disabled={loading} sx={menuItemSx} onClick={handleInstantRecord}>
+                    <Image loading="eager" src="/mic.svg" alt="mic" width={16} height={16} />
                     Instant record
                 </MenuItem>
-                <MenuItem sx={menuItemSx} onClick={handleClose}>
-                    <Image src="/interaction-file.svg" alt="mic" width={16} height={16} />
+                <MenuItem sx={menuItemSx} onClick={handleAddSourceClick}>
+                    <Image loading="eager" src="/interaction-file.svg" alt="mic" width={16} height={16} />
                     Add Source & transcribe
                 </MenuItem>
             </Menu>
+            <input
+                type="file"
+                accept="audio/*"
+                ref={fileInputRef}
+                style={{ display: "none" }}
+            />
         </>
     );
 };
