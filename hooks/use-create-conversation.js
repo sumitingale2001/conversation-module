@@ -22,7 +22,7 @@ const useCreateConversation = () => {
             const response = await ApiService.createConversation(body);
             setLoading(false)
 
-            router.push(`/conversation/${payload.sourceType}/${response.data.data._id}`)
+            router.push(`/conversation/${response.data.data._id}/${payload.sourceType}`)
 
         } catch (error) {
             setLoading(false)

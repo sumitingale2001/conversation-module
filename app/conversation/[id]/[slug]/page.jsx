@@ -1,6 +1,5 @@
-
 const Page = () => {
-    return <>Instant</>
+    return <>hello</>
 }
 
 export default Page;
