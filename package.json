@@ -12,11 +12,14 @@
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@mui/material": "^9.0.0",
+    "@wavesurfer/react": "^1.0.12",
     "axios": "^1.15.0",
     "emoji-picker-react": "^4.18.0",
+    "lucide-react": "^1.8.0",
     "next": "16.2.2",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "wavesurfer.js": "^7.12.6",
     "zustand": "^5.0.12"
   },
   "devDependencies": {
