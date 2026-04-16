@@ -18,5 +18,14 @@ export const conversationServices = {
     },
     async toggleConversationStar(data) {
         return await apiInstance.patch(`${CONVERSATIONS}/star`, data);
+    },
+    async getTimeline(conversationId, workspaceId) {
+        return await apiInstance.get(`${CONVERSATIONS}/${conversationId}/timeline?workspaceId=${workspaceId}`);
+    },
+    async appendRecording(data) {
+        return await apiInstance.post(`/recording/append`, data);
+    },
+    async replaceRecording(data) {
+        return await apiInstance.post(`/recording/replace`, data);
     }
 }

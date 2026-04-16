@@ -18,7 +18,7 @@ const EmojiAndTitleSection = () => {
     const conversation = useConversationStore((state) => state.conversation);
     const emoji = conversation?.emoji || "😀";
     const storeTitle = conversation?.title || "Untitled";
-    
+
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     const [title, setTitle] = useState("Untitled");
     const pickerRef = useRef(null);
@@ -96,26 +96,37 @@ const EmojiAndTitleSection = () => {
 
 
 const OtherOptions = () => {
-    const isStarred = useConversationStore((state) => state.conversation?.isStarred || false);
+    const { conversation, viewMode, setViewMode } = useConversationStore();
+    const isStarred = conversation?.isStarred || false;
     const { toggleStar } = useToggleStar();
     const params = useParams();
 
     return <div className="flex items-center gap-3">
-        <Image 
-            src={isStarred ? '/golden-star.svg' : '/star.svg'} 
-            width={24} 
-            height={24} 
-            alt="star" 
+        <Image
+            src={isStarred ? '/golden-star.svg' : '/star.svg'}
+            width={24}
+            height={24}
+            alt="star"
             className="cursor-pointer transition-transform active:scale-95"
             onClick={() => toggleStar({ conversationId: params?.id, workspaceId: "681896a0b95b90b6f3996ed7" })}
         />
-        <Image src={'/three-dots.svg'} width={24} height={24} alt="three-dots" />
-        <div className="flex items-center gap-1 justify-center p-1 border border-gray-500 rounded-[8px]">
-            <Image src='/recording.svg' width={24} height={24} alt="recording" />
-            <span>|</span>
-            <Image src='/media-file.svg' width={24} height={24} alt="file" />
+        <Image className="cursor-pointer" src={'/three-dots.svg'} width={24} height={24} alt="three-dots" />
+        <div className="flex items-center gap-1 justify-center p-1 border border-gray-400 rounded-[8px]">
+            <div 
+                className={`flex items-center justify-center p-1 cursor-pointer rounded-md border transition-all duration-200 ${viewMode === 'left' ? 'border-gray-300 bg-gray-100 shadow-sm' : 'border-transparent hover:bg-gray-50'}`}
+                onClick={() => setViewMode(viewMode === 'left' ? 'split' : 'left')}
+            >
+                <Image src='/recording.svg' width={20} height={20} alt="recording" />
+            </div>
+            <span className="text-gray-400 select-none">|</span>
+            <div 
+                className={`flex items-center justify-center p-1 cursor-pointer rounded-md border transition-all duration-200 ${viewMode === 'right' ? 'border-gray-300 bg-gray-100 shadow-sm' : 'border-transparent hover:bg-gray-50'}`}
+                onClick={() => setViewMode(viewMode === 'right' ? 'split' : 'right')}
+            >
+                <Image src='/media-file.svg' width={20} height={20} alt="file" />
+            </div>
         </div>
-        <Image src={'/chat-icon.svg'} width={24} height={24} alt="chat" />
+        <Image className="cursor-pointer" src={'/chat-icon.svg'} width={24} height={24} alt="chat" />
     </div>
 }
 

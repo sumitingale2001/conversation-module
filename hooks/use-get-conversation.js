@@ -40,7 +40,7 @@ const useGetConversation = () => {
 
             setIsLoading(false);
             setStoreIsLoading(false);
-            return conversationData;
+            // return conversationData;
         } catch (err) {
             setError(err);
             setIsLoading(false);
