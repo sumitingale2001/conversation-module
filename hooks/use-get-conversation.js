@@ -46,6 +46,9 @@ const useGetConversation = () => {
             setIsLoading(false);
             setStoreIsLoading(false);
             return null;
+        } finally {
+            setIsLoading(false);
+            setStoreIsLoading(false);
         }
     };
 

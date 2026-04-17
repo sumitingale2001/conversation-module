@@ -27,6 +27,8 @@ const useGetTimeline = () => {
             setError(err);
             setIsLoading(false);
             return null;
+        } finally {
+            setIsLoading(false);
         }
     };
 

@@ -20,12 +20,12 @@ export const conversationServices = {
         return await apiInstance.patch(`${CONVERSATIONS}/star`, data);
     },
     async getTimeline(conversationId, workspaceId) {
-        return await apiInstance.get(`${CONVERSATIONS}/${conversationId}/timeline?workspaceId=${workspaceId}`);
+        return await apiInstance.get(`${CONVERSATIONS}/recording/timeline?conversationId=${conversationId}&workspaceId=${workspaceId}`);
     },
     async appendRecording(data) {
-        return await apiInstance.post(`/recording/append`, data);
+        return await apiInstance.post(`${CONVERSATIONS}/recording/append`, data);
     },
     async replaceRecording(data) {
-        return await apiInstance.post(`/recording/replace`, data);
+        return await apiInstance.post(`${CONVERSATIONS}/recording/replace`, data);
     }
 }

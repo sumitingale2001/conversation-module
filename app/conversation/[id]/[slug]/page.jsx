@@ -1,10 +1,14 @@
 import ConversationContent from "./components";
-
-
+import ViewModeController from "./components/view-mode-controller";
 
 const Page = async ({ params }) => {
-    const { slug } = await params
-    return <ConversationContent slug={slug} />
+    const { slug, id } = await params;
+    return (
+        <>
+            <ViewModeController slug={slug} id={id} />
+            <ConversationContent />
+        </>
+    );
 }
 
 export default Page;

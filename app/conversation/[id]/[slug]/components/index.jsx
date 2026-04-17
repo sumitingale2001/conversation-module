@@ -1,30 +1,38 @@
 'use client';
 
-import Transcript from "./transcript";
+import TimelineEditor from "./timeline-editor";
+import RecordingExperience from "./recording-experience";
 import useConversationStore from "../../../../../store/conversation.store";
 
 const ConversationContent = () => {
     const viewMode = useConversationStore((state) => state.viewMode);
+    const conversation = useConversationStore((state) => state.conversation);
+
+    const isCompleted = conversation?.status === "completed";
 
     return (
-        <div className="w-full min-h-[calc(100vh-60px)] flex flex-col md:flex-row items-stretch gap-6">
-            {/* Left Section */}
+        <div className="w-full h-full flex overflow-hidden">
+            {/* Left Section: Transcript and Timeline */}
             {(viewMode === "split" || viewMode === "left") && (
-                <div className={`flex flex-col h-full p-6 transition-all duration-300 ${viewMode === "split" ? "flex-1 border-r border-gray-200" : "w-full max-w-4xl mx-auto"}`}>
-                    <div className="flex-1 h-full">
-                        <Transcript />
-                    </div>
+                <div 
+                    className={`flex flex-col h-full p-0 transition-all duration-300 ${
+                        viewMode === "split" ? "w-1/2 border-r border-gray-200" : "w-full max-w-4xl mx-auto"
+                    }`}
+                >
+                    {!isCompleted ? <RecordingExperience /> : <div className="p-6 h-full flex flex-col"><TimelineEditor /></div>}
                 </div>
             )}
 
-            {/* Right Section */}
+            {/* Right Section: Summary and Media */}
             {(viewMode === "split" || viewMode === "right") && (
-                <div className={`flex flex-col h-full p-6 transition-all duration-300 ${viewMode === "split" ? "flex-1" : "w-full max-w-4xl mx-auto"}`}>
-                    <div className="flex-1 h-full">
-                        {/* Placeholder for the Right Section Content */}
-                        <div className="w-full h-full flex items-center justify-center border-2 border-dashed border-gray-200 rounded-xl bg-gray-50 text-gray-400 font-medium">
-                            Right Section (Summary & Media)
-                        </div>
+                <div 
+                    className={`flex flex-col h-full p-6 transition-all duration-300 overflow-y-auto bg-gray-50 ${
+                        viewMode === "split" ? "w-1/2" : "w-full max-w-4xl mx-auto"
+                    }`}
+                >
+                    {/* Placeholder for the Right Section Content */}
+                    <div className="w-full h-full flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-xl bg-white text-gray-400 font-medium p-8">
+                        Right Section (Summary & Media)
                     </div>
                 </div>
             )}
