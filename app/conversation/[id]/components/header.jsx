@@ -16,6 +16,7 @@ import { HeaderSkeleton } from "../../../../components/skeletons";
 
 const EmojiAndTitleSection = () => {
     const conversation = useConversationStore((state) => state.conversation);
+
     const emoji = conversation?.emoji || "😀";
     const storeTitle = conversation?.title || "Untitled";
 
@@ -23,6 +24,8 @@ const EmojiAndTitleSection = () => {
     const [title, setTitle] = useState("Untitled");
     const pickerRef = useRef(null);
     const params = useParams();
+    const conversationId = params?.id;
+
     const { renameConversation } = useRenameConversation();
     const { updateEmoji } = useUpdateEmoji();
 
@@ -42,6 +45,43 @@ const EmojiAndTitleSection = () => {
         }
     }, [storeTitle]);
 
+    const handleEmojiClick = (emojiData) => {
+        if (!conversationId) return;
+
+        const newEmoji = emojiData?.emoji;
+        if (!newEmoji || newEmoji === emoji) return;
+
+        const payload = {
+            conversationId,
+            workspaceId: "681896a0b95b90b6f3996ed7",
+            emoji: newEmoji
+        };
+
+        console.log("API CALL", { type: "emoji", conversationId, payload });
+
+        updateEmoji(payload);
+        setShowEmojiPicker(false);
+    };
+
+    const handleRenameSubmit = (e) => {
+        e.preventDefault();
+        
+        if (!conversationId) return;
+
+        const newTitle = title.trim();
+        if (!newTitle || newTitle === storeTitle) return;
+
+        const payload = {
+            conversationId,
+            workspaceId: "681896a0b95b90b6f3996ed7",
+            title: newTitle
+        };
+
+        console.log("API CALL", { type: "rename", conversationId, payload });
+        
+        renameConversation(payload);
+    };
+
     return <div className="flex items-center gap-5">
         <div className="relative" ref={pickerRef}>
             <div
@@ -54,27 +94,13 @@ const EmojiAndTitleSection = () => {
             {showEmojiPicker && (
                 <div className="absolute top-[40px] left-0 z-50">
                     <EmojiPicker
-                        onEmojiClick={(emojiData) => {
-                            updateEmoji({
-                                conversationId: params?.id,
-                                workspaceId: "681896a0b95b90b6f3996ed7",
-                                emoji: emojiData.emoji
-                            });
-                            setShowEmojiPicker(false);
-                        }}
+                        onEmojiClick={handleEmojiClick}
                     />
                 </div>
             )}
         </div>
         <form
-            onSubmit={(e) => {
-                e.preventDefault();
-                renameConversation({
-                    conversationId: params?.id,
-                    workspaceId: "681896a0b95b90b6f3996ed7", // Hardcoded standard mapping per search-and-create.jsx
-                    title: title
-                });
-            }}
+            onSubmit={handleRenameSubmit}
             className="flex flex-col gap-1"
         >
             <input
@@ -100,6 +126,26 @@ const OtherOptions = () => {
     const isStarred = conversation?.isStarred || false;
     const { toggleStar } = useToggleStar();
     const params = useParams();
+    const conversationId = params?.id;
+    const [isTogglingStar, setIsTogglingStar] = useState(false);
+
+    const handleToggleStar = async () => {
+        if (!conversationId || isTogglingStar) return;
+
+        const payload = {
+            conversationId,
+            workspaceId: "681896a0b95b90b6f3996ed7"
+        };
+        
+        console.log("API CALL", { type: "star", conversationId, payload });
+        
+        setIsTogglingStar(true);
+        try {
+            await toggleStar(payload);
+        } finally {
+            setTimeout(() => setIsTogglingStar(false), 500); // 500ms safety block avoiding rapid redundant clicks securely
+        }
+    };
 
     return <div className="flex items-center gap-3">
         <Image
@@ -108,7 +154,7 @@ const OtherOptions = () => {
             height={24}
             alt="star"
             className="cursor-pointer transition-transform active:scale-95"
-            onClick={() => toggleStar({ conversationId: params?.id, workspaceId: "681896a0b95b90b6f3996ed7" })}
+            onClick={handleToggleStar}
         />
         <Image className="cursor-pointer" src={'/three-dots.svg'} width={24} height={24} alt="three-dots" />
         <div className="flex items-center gap-1 justify-center p-1 border border-gray-400 rounded-[8px]">

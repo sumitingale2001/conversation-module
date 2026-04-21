@@ -10,7 +10,7 @@ const useGetConversation = () => {
     const { setLoading: setIsLoading, loading: isLoading } = useLoading();
     const [error, setError] = useState(null);
 
-    const { setConversation, setIsLoading: setStoreIsLoading } = useConversationStore();
+    const { setConversation, setTimeline, setIsLoading: setStoreIsLoading } = useConversationStore();
 
     const getConversation = async ({ conversationId, workspaceId }) => {
         setIsLoading(true);
@@ -20,23 +20,29 @@ const useGetConversation = () => {
         try {
             const response = await ApiService.getConversation(conversationId, workspaceId);
 
-            // Destructure/safeguard depending on whether data is wrapped deeply (e.g. response.data.data) 
-            // or just returned natively at the top level (response.data)
+          
             const conversationData = response?.data?.data || response?.data || response;
 
             if (conversationData) {
-                setConversation({
-                    _id: conversationData._id,
-                    title: conversationData.title,
-                    emoji: conversationData.emoji,
-                    description: conversationData.description,
-                    totalDuration: conversationData.totalDuration,
-                    createdAt: conversationData.createdAt,
-                    isStarred: conversationData.isStarred,
-                    formattedDuration: formatDuration(conversationData.totalDuration),
-                    formattedCreatedAt: formatCreatedAt(conversationData.createdAt)
+                // Use setTimeline to ensure segments and tags are also processed/mapped
+                setTimeline({
+                    conversation: {
+                        _id: conversationData.conversation._id,
+                        title: conversationData.conversation.title,
+                        emoji: conversationData.conversation.emoji,
+                        description: conversationData.conversation.description,
+                        totalDuration: conversationData.conversation.totalDuration,
+                        createdAt: conversationData.conversation.createdAt,
+                        isStarred: conversationData.conversation.isStarred,
+                        status: conversationData.conversation.status, // Ensure status is synced
+                        formattedDuration: formatDuration(conversationData.conversation.totalDuration),
+                        formattedCreatedAt: formatCreatedAt(conversationData.conversation.createdAt)
+                    },
+                    segments: conversationData.segments || [],
+                    tags: conversationData.tags || []
                 });
             }
+            
 
             setIsLoading(false);
             setStoreIsLoading(false);

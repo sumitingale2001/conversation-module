@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import ApiService from "../services";
 import useLoading from "./use-loading";
 import useConversationStore from "../store/conversation.store";
@@ -9,11 +9,12 @@ const useUpdateEmoji = () => {
     const { setLoading: setIsLoading, loading: isLoading } = useLoading();
     const [error, setError] = useState(null);
 
-    const updateConversation = useConversationStore((state) => state.updateConversation);
+    const setConversation = useConversationStore((state) => state.setConversation);
 
-    const updateEmoji = async (payload) => {
+    const updateEmoji = useCallback(async (payload) => {
         // Fetch current emoji directly from store to guarantee no closure staleness during debounces
-        const previousEmoji = useConversationStore.getState().conversation?.emoji;
+        const currentConversation = useConversationStore.getState().conversation;
+        const previousEmoji = currentConversation?.emoji;
 
         // High-Frequency Safety check: Prevent network overhead if emoji hasn't changed.
         // Extremely important for elements like Emoji Pickers that rapidly dispatch updates in short succession.
@@ -24,7 +25,7 @@ const useUpdateEmoji = () => {
 
         try {
             // 1. Immediate optimistic UI sync
-            updateConversation({ emoji: payload.emoji });
+            setConversation({ ...currentConversation, emoji: payload.emoji });
 
             const body = {
                 conversationId: payload.conversationId,
@@ -38,12 +39,12 @@ const useUpdateEmoji = () => {
             setIsLoading(false);
         } catch (err) {
             // 3. Guaranteed Rollback pattern using accurate local buffer
-            updateConversation({ emoji: previousEmoji });
+            setConversation({ ...currentConversation, emoji: previousEmoji });
             
             setError(err);
             setIsLoading(false);
         }
-    };
+    }, [setIsLoading, setConversation]);
 
     return {
         updateEmoji,

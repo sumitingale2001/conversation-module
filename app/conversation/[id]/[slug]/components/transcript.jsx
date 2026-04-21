@@ -66,33 +66,20 @@ const Transcript = () => {
         };
     }, []);
 
-    const requestMicrophone = async () => {
-        try {
-            // Prompt user for mic permission
-            const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            return mediaStream;
-        } catch (err) {
-            console.error("Microphone permission denied", err);
-            alert("Microphone access is required to record audio.");
-            return null;
-        }
-    };
-
     const startRecordLogic = async () => {
-        const mediaStream = await requestMicrophone();
-        if (!mediaStream) return;
+        try {
+            // Now startRecording() handles the stream and recorder initialization
+            const mediaStream = await startRecording();
+            if (!mediaStream) return;
 
-        // Render waveform visualization
-        if (recordPluginRef.current) {
-            micStreamRef.current = recordPluginRef.current.renderMicStream(mediaStream);
+            // Render waveform visualization
+            if (recordPluginRef.current) {
+                micStreamRef.current = recordPluginRef.current.renderMicStream(mediaStream);
+            }
+        } catch (err) {
+            console.error("Failed to start recording:", err);
+            alert("Microphone access is required to record audio.");
         }
-
-        // Create the media recorder and pass instances to store
-        const mediaRecorder = new MediaRecorder(mediaStream);
-        startRecording(mediaStream, mediaRecorder);
-
-        // Begin recording
-        mediaRecorder.start();
     };
 
     const handleMainAction = () => {
@@ -132,14 +119,14 @@ const Transcript = () => {
 
     return (
         <>
-            <div className="flex items-center  justify-between">
+            {/* <div className="flex items-center  justify-between">
                 <p className="text-lg font-bold leading-[24px] text-gray-800 tracking-wide">Transcript</p>
                 <div className="flex items-center gap-2">
 
                     <Undo className="cursor-pointer opacity-50" size={20} />
                     <Redo className="cursor-pointer opacity-50" size={20} />
                 </div>
-            </div>
+            </div> */}
             <div className="flex flex-col items-center justify-center min-h-[500px] w-full p-5">
                 <div className="w-full max-w-[600px] bg-white rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border border-gray-100 overflow-hidden mt-20">
 

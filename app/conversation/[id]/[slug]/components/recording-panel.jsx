@@ -5,22 +5,37 @@ import {
     Check, ChevronDown, Gem, Mic, Play, RotateCw, RefreshCw 
 } from 'lucide-react';
 import useConversationStore from '../../../../../store/conversation.store';
+import { useRecordingStore } from '../../../../../store/recording.store';
 import StaticWaveform from './static-waveform';
 
-const RecordingPanel = ({ 
-    timer, 
-    handleReset, 
-    handleConfirm, 
-    handlePauseToggle, 
-    isPaused 
-}) => {
+const formatTimer = (seconds) => {
+    if (!seconds) return "00:00:00";
+    const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
+    const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
+    const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+    return `${h}:${m}:${s}`;
+};
+
+const RecordingPanel = ({ handleReset, handleConfirm }) => {
     const { conversation } = useConversationStore();
+    const { isPaused, isRecording, duration, pauseRecording, resumeRecording } = useRecordingStore();
+    
     const isProcessing = conversation?.status === "processing";
+
+    const handlePauseToggle = () => {
+        if (isPaused) {
+            resumeRecording();
+        } else {
+            pauseRecording();
+        }
+    };
 
     return (
         <div className="mx-auto w-full max-w-3xl rounded-xl bg-white shadow-md ring-1 ring-gray-200">
             <div className="flex items-center justify-between px-5 py-3">
-                <div className="text-lg font-semibold tabular-nums text-gray-900">{timer || "00:00:00"}</div>
+                <div className="text-lg font-semibold tabular-nums text-gray-900">
+                    {formatTimer(duration)}
+                </div>
                 <div className="flex items-center gap-2">
                     <button 
                         onClick={handleReset}
@@ -73,7 +88,7 @@ const RecordingPanel = ({
                 <button 
                     onClick={handlePauseToggle}
                     disabled={isProcessing}
-                    className="rounded-md border border-gray-200 px-6 py-1.5 font-medium text-gray-900 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                    className={`rounded-md border border-gray-200 px-6 py-1.5 font-medium hover:bg-gray-50 disabled:opacity-50 transition-colors ${isPaused ? "text-red-600" : "text-gray-900"}`}
                 >
                     {isProcessing ? "Processing..." : (isPaused ? "Resume" : "Pause")}
                 </button>
