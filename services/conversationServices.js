@@ -125,7 +125,14 @@ export const conversationServices = {
     return this.replaceSegment(payload);
   },
 
-  async finalizeRecording(payload) {
+  async ensureTranscript(payload) {
+    if (!payload.conversationId || !payload.workspaceId) return null;
+    return await request(
+      apiInstance.get(`/transcript?conversationId=${payload.conversationId}&workspaceId=${payload.workspaceId}`)
+    );
+  },
+
+  async triggerTranscription(payload) {
     if (!payload.conversationId || !payload.workspaceId) return null;
     return await request(apiInstance.post("/transcript/transcribe", payload));
   },

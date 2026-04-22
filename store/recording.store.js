@@ -1,12 +1,6 @@
 import { create } from 'zustand';
 
-/**
- * RECORDING ENGINE STORE
- * Manages the entire MediaRecorder lifecycle globally to ensure persistent access
- * and consistent state across components.
- */
 export const useRecordingStore = create((set, get) => ({
-    // --- 1. STATE ---
     mediaRecorder: null,
     mediaStream: null,
     audioChunks: [],
@@ -14,123 +8,139 @@ export const useRecordingStore = create((set, get) => ({
     isPaused: false,
     duration: 0,
     intervalId: null,
+    flushInterval: null,
 
-    // --- 2. ACTIONS ---
-
-    /**
-     * startRecording()
-     * Handles permissions, stream initialization, and recorder event binding.
-     * Updated with 1000ms timeslice to ensure continuous chunk emission.
-     */
+    // ✅ START RECORDING
     startRecording: async () => {
-        // Prevent overlapping recordings
         if (get().isRecording) return;
 
         try {
-            // STEP A: REQUEST PERMISSION & GET STREAM
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            
-            // STEP B: INITIALIZE RECORDER
-            const recorder = new MediaRecorder(stream);
-            const chunks = [];
+            console.log("🎬 START RECORDING");
 
-            // STEP C: BIND EVENT HANDLERS (Collect Chunks)
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+            stream.getTracks().forEach(track => {
+                console.log("🎤 Track:", track.kind, track.readyState);
+            });
+
+            const recorder = new MediaRecorder(stream, {
+                mimeType: 'audio/webm'
+            });
+
+            // ✅ IMPORTANT: DO NOT OVERRIDE LATER
             recorder.ondataavailable = (event) => {
+                console.log("🔥 DATA EVENT SIZE:", event.data?.size);
+
                 if (event.data && event.data.size > 0) {
-                    chunks.push(event.data);
+                    set((state) => {
+                        const updated = [...state.audioChunks, event.data];
+                        console.log("✅ CHUNKS LENGTH:", updated.length);
+                        return { audioChunks: updated };
+                    });
                 }
             };
 
-            // STEP D: START RECORDING
-            // 🔥 FIX: Added 1000ms timeslice to ensure ondataavailable fires regularly
-            recorder.start(1000);
+            recorder.onstart = () => console.log("▶️ Recording started");
+            recorder.onpause = () => console.log("⏸ Recording paused");
+            recorder.onresume = () => console.log("▶️ Recording resumed");
+            recorder.onstop = () => console.log("⛔ Recording stopped");
 
-            // STEP E: START TIMER (Increment duration every second)
-            if (get().intervalId) clearInterval(get().intervalId);
-            const timerId = setInterval(() => {
-                set((state) => ({ duration: state.duration + 1 }));
+            recorder.start(1000); // emit every second
+
+            // ✅ FORCE CHUNK FLUSH (CRITICAL FIX)
+            const flushInterval = setInterval(() => {
+                if (recorder.state === "recording") {
+                    console.log("⚡ forcing requestData()");
+                    recorder.requestData();
+                }
+            }, 1000);
+
+            const timer = setInterval(() => {
+                set((s) => ({ duration: s.duration + 1 }));
             }, 1000);
 
             set({
                 mediaRecorder: recorder,
                 mediaStream: stream,
-                audioChunks: chunks,
+                audioChunks: [], // reset cleanly
                 isRecording: true,
                 isPaused: false,
                 duration: 0,
-                intervalId: timerId
+                intervalId: timer,
+                flushInterval
             });
 
-            return stream; // Returns stream for visualizers (like Wavesurfer)
-        } catch (error) {
-            console.error("Recording Engine failed to start:", error);
-            throw error;
+        } catch (err) {
+            console.error("❌ startRecording failed:", err);
         }
     },
 
-    /**
-     * pauseRecording()
-     * Suspends the collector and stops the timer.
-     */
+    // ✅ PAUSE
     pauseRecording: () => {
         const { mediaRecorder, intervalId } = get();
-        if (mediaRecorder && mediaRecorder.state === 'recording') {
+
+        if (mediaRecorder?.state === "recording") {
             mediaRecorder.pause();
         }
+
         if (intervalId) clearInterval(intervalId);
+
         set({ isPaused: true, intervalId: null });
     },
 
-    /**
-     * resumeRecording()
-     * Resumes the collector and restarts the timer.
-     */
+    // ✅ RESUME
     resumeRecording: () => {
         const { mediaRecorder } = get();
-        if (mediaRecorder && mediaRecorder.state === 'paused') {
+
+        if (mediaRecorder?.state === "paused") {
             mediaRecorder.resume();
         }
-        
-        const timerId = setInterval(() => {
-            set((state) => ({ duration: state.duration + 1 }));
+
+        const timer = setInterval(() => {
+            set((s) => ({ duration: s.duration + 1 }));
         }, 1000);
 
-        set({ isPaused: false, intervalId: timerId });
+        set({ isPaused: false, intervalId: timer });
     },
 
-    /**
-     * stopRecording()
-     * Stops the recorder and returns the final Blob via Promise.
-     * Updated to force a final data flush before stopping.
-     */
+    // ✅ STOP RECORDING (FIXED PROPERLY)
     stopRecording: async () => {
-        const { mediaRecorder, mediaStream, audioChunks, intervalId } = get();
+        const { mediaRecorder, mediaStream, intervalId, flushInterval, audioChunks } = get();
 
         return new Promise((resolve, reject) => {
-            if (!mediaRecorder) {
-                return resolve(null);
-            }
+            if (!mediaRecorder) return resolve(null);
 
-            // Bind onstop BEFORE calling stop()
+            const finalChunks = [];
+
+            const handleFinalChunk = (event) => {
+                console.log("🧩 FINAL CHUNK:", event.data?.size);
+                if (event.data && event.data.size > 0) {
+                    finalChunks.push(event.data);
+                }
+            };
+
+            // ✅ ADD LISTENER (DO NOT OVERRIDE)
+            mediaRecorder.addEventListener('dataavailable', handleFinalChunk);
+
             mediaRecorder.onstop = () => {
                 try {
-                    // Create blob from collected chunks
-                    const blob = new Blob(audioChunks, { type: 'audio/webm' });
+                    mediaRecorder.removeEventListener('dataavailable', handleFinalChunk);
 
-                    // Edge Case: Check for empty blob (e.g. <300ms recording)
+                    const allChunks = [...audioChunks, ...finalChunks];
+
+                    console.log("🎯 FINAL CHUNKS:", allChunks.length);
+
+                    const blob = new Blob(allChunks, { type: 'audio/webm' });
+
                     if (!blob || blob.size === 0) {
                         throw new Error("Empty audio blob generated");
                     }
 
-                    // Cleanup Mic Tracks
-                    if (mediaStream) {
-                        mediaStream.getTracks().forEach(track => track.stop());
-                    }
-
-                    // Clear Timer
+                    // cleanup
+                    mediaStream?.getTracks().forEach(track => track.stop());
                     if (intervalId) clearInterval(intervalId);
+                    if (flushInterval) clearInterval(flushInterval);
 
-                    // RESET STORE
                     set({
                         mediaRecorder: null,
                         mediaStream: null,
@@ -138,37 +148,41 @@ export const useRecordingStore = create((set, get) => ({
                         isRecording: false,
                         isPaused: false,
                         duration: 0,
-                        intervalId: null
+                        intervalId: null,
+                        flushInterval: null
                     });
 
                     resolve(blob);
                 } catch (err) {
-                    console.error("Payload generation failed:", err);
+                    console.error("❌ stopRecording error:", err);
                     reject(err);
                 }
             };
 
-            // Trigger stop
-            if (mediaRecorder.state !== 'inactive') {
-                // 🔥 FIX: Force final chunk emission before stopping
-                mediaRecorder.requestData();
+            // ✅ FORCE LAST DATA
+            if (mediaRecorder.state !== "inactive") {
+                try {
+                    if (mediaRecorder.state === "recording") {
+                        mediaRecorder.requestData();
+                    }
+                } catch (e) {
+                    console.warn("requestData ignored:", e);
+                }
                 mediaRecorder.stop();
             } else {
-                // If already inactive, trigger onstop manually if browser hasn't or return existing chunks
                 mediaRecorder.onstop();
             }
         });
     },
 
-    /**
-     * reset()
-     * Emergency cleanup and state reset.
-     */
+    // ✅ RESET
     reset: () => {
-        const { mediaStream, intervalId } = get();
-        if (mediaStream) mediaStream.getTracks().forEach(track => track.stop());
+        const { mediaStream, intervalId, flushInterval } = get();
+
+        mediaStream?.getTracks().forEach(track => track.stop());
         if (intervalId) clearInterval(intervalId);
-        
+        if (flushInterval) clearInterval(flushInterval);
+
         set({
             mediaRecorder: null,
             mediaStream: null,
@@ -176,7 +190,8 @@ export const useRecordingStore = create((set, get) => ({
             isRecording: false,
             isPaused: false,
             duration: 0,
-            intervalId: null
+            intervalId: null,
+            flushInterval: null
         });
     }
 }));

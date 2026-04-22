@@ -68,11 +68,11 @@ const Transcript = () => {
 
     const startRecordLogic = async () => {
         try {
-            // Now startRecording() handles the stream and recorder initialization
+            // Store handles stream and recorder instantiation (Single Owner)
             const mediaStream = await startRecording();
             if (!mediaStream) return;
 
-            // Render waveform visualization
+            // WaveSurfer ONLY visualizes the store's stream
             if (recordPluginRef.current) {
                 micStreamRef.current = recordPluginRef.current.renderMicStream(mediaStream);
             }
@@ -87,29 +87,37 @@ const Transcript = () => {
             startRecordLogic();
         } else if (isRecording && !isPaused) {
             pauseRecording();
-            // Pause visualization
             if (micStreamRef.current) {
-                micStreamRef.current.onDestroy();
+                micStreamRef.current.destroy(); // Fix: use destroy() instead of onDestroy()
                 micStreamRef.current = null;
             }
         } else if (isRecording && isPaused) {
             resumeRecording();
-            // Resume visualization
-            if (stream && recordPluginRef.current) {
-                micStreamRef.current = recordPluginRef.current.renderMicStream(stream);
+            // Store maintains stream, retrieve it to resume visualization
+            const currentStream = useRecordingStore.getState().mediaStream;
+            if (currentStream && recordPluginRef.current) {
+                micStreamRef.current = recordPluginRef.current.renderMicStream(currentStream);
             }
         }
     };
 
-    const handleStopCleanly = () => {
-        stopRecording();
+    const handleStopCleanly = async () => {
+        // Wait for MediaRecorder to finish and return Blob
+        const blob = await stopRecording();
+        
+        // Stop UI visualization cleanly
         if (micStreamRef.current) {
-            micStreamRef.current.onDestroy();
+            micStreamRef.current.destroy(); // Fix from onDestroy to destroy()
             micStreamRef.current = null;
+        }
+
+        // Emit blob or proceed with finalization flow
+        if (blob) {
+            console.log("Blob generated successfully:", blob);
+            // S3 Upload and Backend Finalization would occur here
         }
     };
 
-    // Cleanup on unmount
     useEffect(() => {
         return () => {
             handleStopCleanly();

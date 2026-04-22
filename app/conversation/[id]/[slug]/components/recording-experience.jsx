@@ -12,15 +12,16 @@ import TranscriptCard from './transcript-card';
 import RecordingPanel from './recording-panel';
 
 const RecordingExperience = () => {
-    const { conversation, setConversation } = useConversationStore();
-    const { stopRecording, reset, startRecording, duration } = useRecordingStore();
+    const { conversation, setConversation, segments } = useConversationStore();
+    const { stopRecording, reset, startRecording, duration, audioChunks, isRecording,  } = useRecordingStore();
     const { getConversation } = useGetConversation();
-    
+
     const [pollingError, setPollingError] = useState(false);
     const [isProcessingLocal, setIsProcessingLocal] = useState(false);
     const isProcessing = conversation?.status === "processing";
     const pollingIntervalRef = useRef(null);
     const timeoutRef = useRef(null);
+    const hasStartedRecording = useRef(false);
 
     // 🔥 POLLING SYSTEM (MANDATORY)
     useEffect(() => {
@@ -62,30 +63,43 @@ const RecordingExperience = () => {
     const handleReset = () => {
         reset();
     };
+    
 
-    const uploadToS3 = async (blob, filename) => {
+    useEffect(() => {
+        // if (
+        //     conversation &&
+        //     conversation.sourceType === "instant" &&
+        //     !isRecording &&
+        //     !hasStartedRecording.current
+        // ) {
+            hasStartedRecording.current = true;
+            startRecording();
+        // }
+    }, []);
+
+    
+
+    const uploadAudio = async (blob) => {
         try {
-            // 1. Get presigned URL
-            const { data: presignData } = await apiInstance.post('/uploads/presign', {
-                filename,
-                contentType: blob.type || 'audio/webm',
-                contentLength: blob.size,
+            const formData = new FormData();
+            formData.append('file', blob);
+            formData.append('conversationId', conversation?._id);
+            formData.append('workspaceId', "681896a0b95b90b6f3996ed7");
+
+            const { data } = await apiInstance.post('/uploads/audio', formData, {
+                headers: {
+                    'Content-Type': 'multipart/form-data',
+                },
             });
 
-            const { putUrl, objectKey } = presignData;
+            if (!data.success) {
+                throw new Error("Upload failed");
+            }
 
-            // 2. Upload blob directly to S3
-            await axios.put(putUrl, blob, {
-                headers: { 'Content-Type': blob.type || 'audio/webm' }
-            });
-
-            // 3. Construct File URL (Standard S3 path format)
-            const bucket = "docrag-uploads-dev-058264258120";
-            const region = "ap-south-1";
-            return `https://${bucket}.s3.${region}.amazonaws.com/${objectKey}`;
+            return data.fileUrl;
         } catch (error) {
-            console.error("S3 Upload Failed:", error);
-            throw new Error("Failed to upload audio to storage.");
+            console.error("Upload Failed:", error);
+            throw new Error("Failed to upload audio.");
         }
     };
 
@@ -100,14 +114,13 @@ const RecordingExperience = () => {
             const finalBlob = await stopRecording();
             if (!finalBlob) throw new Error("Recording failed to generate audio payload.");
 
-            // STEP 3 - UPLOAD TO S3
-            const filename = `recording-${Date.now()}.webm`;
-            const fileUrl = await uploadToS3(finalBlob, filename);
+            // STEP 3 - UPLOAD TO BACKEND API
+            const fileUrl = await uploadAudio(finalBlob);
 
             // STEP 4 - APPEND SEGMENT
             const appendData = {
                 conversationId: conversation?._id,
-                workspaceId: conversation?.workspaceId,
+                workspaceId: '681896a0b95b90b6f3996ed7',
                 fileUrl,
                 duration: roundVal(duration),
                 startTime: roundVal(0),
@@ -127,13 +140,32 @@ const RecordingExperience = () => {
             // STEP 5 - WAIT 1–1.5 SECONDS (Stabilization buffer)
             await new Promise(resolve => setTimeout(resolve, 1200));
 
-            // STEP 6 - FINALIZE
-            // RULE 3: FINALIZE FAIL -> RETRY ALLOWED
-            const finalizeRes = await conversationServices.finalizeRecording({
-                conversationId: conversation?._id,
-                workspaceId: conversation?.workspaceId
-            });
-            if (!finalizeRes.success) console.error("Finalization failed:", finalizeRes.error);
+            // ENSURE TRANSCRIPT EXISTS (GET /transcript)
+            // RULE: If GET fails -> STOP. Do NOT trigger transcription
+            try {
+                const ensureRes = await conversationServices.ensureTranscript({
+                    conversationId: conversation?._id,
+                    workspaceId: "681896a0b95b90b6f3996ed7"
+                });
+                if (!ensureRes || !ensureRes.success) {
+                    throw new Error("Transcript does not exist or GET failed.");
+                }
+            } catch (err) {
+                console.error("GET /transcript failed, stopping transcription flow:", err);
+                throw new Error("Transcript does not exist or GET failed.");
+            }
+
+            // STEP 6 - TRIGGER TRANSCRIPTION
+            // RULE 3: TRIGGER FAIL -> LOG ONLY
+            try {
+                const triggerRes = await conversationServices.triggerTranscription({
+                    conversationId: conversation?._id,
+                    workspaceId: "681896a0b95b90b6f3996ed7"
+                });
+                if (!triggerRes.success) console.error("Transcription trigger failed:", triggerRes.error);
+            } catch (err) {
+                console.error("Transcription trigger error:", err);
+            }
 
             // STEP 7 - UPDATE STATE
             setConversation({ ...conversation, status: "processing" });
@@ -143,7 +175,7 @@ const RecordingExperience = () => {
             pollingIntervalRef.current = setInterval(() => {
                 getConversation({ 
                     conversationId: conversation?._id, 
-                    workspaceId: conversation?.workspaceId 
+                    workspaceId: "681896a0b95b90b6f3996ed7"
                 });
             }, 3000);
 

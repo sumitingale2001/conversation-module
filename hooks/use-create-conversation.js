@@ -22,8 +22,6 @@ const useCreateConversation = () => {
             const response = await ApiService.createConversation(body);
             setLoading(false)
 
-            console.log("RESPONSE", response)
-
             router.push(`/conversation/${response.data._id}/${payload.sourceType}`)
 
         } catch (error) {
