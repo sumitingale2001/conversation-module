@@ -24,6 +24,7 @@ const useConversationStore = create((set, get) => ({
     conversation: null,
     segments: [],
     tags: [],
+    transcript: null,
     
     // --- 2. DERIVED DATA (CRITICAL) ---
     mappedSegments: [],
@@ -50,11 +51,13 @@ const useConversationStore = create((set, get) => ({
         const conversation = data?.conversation || null;
         const segments = data?.segments || [];
         const tags = data?.tags || [];
+        const transcript = data?.transcript || null;
 
         set({
             conversation,
             segments,
             tags,
+            transcript,
             mappedSegments: mapTagsToSegments(segments, tags)
         });
     },

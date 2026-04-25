@@ -50,6 +50,11 @@ const RecordingExperience = () => {
                 pollingIntervalRef.current = null;
             }
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
+
+            // Bug 1: One final fetch to ensure segments are updated
+            if (conversation?.status === "completed") {
+                getConversation({ conversationId: conversation._id, workspaceId: conversation.workspaceId });
+            }
         }
 
         // Cleanup on unmount
@@ -66,25 +71,22 @@ const RecordingExperience = () => {
     
 
     useEffect(() => {
-        // if (
-        //     conversation &&
-        //     conversation.sourceType === "instant" &&
-        //     !isRecording &&
-        //     !hasStartedRecording.current
-        // ) {
+        if (!hasStartedRecording.current && segments?.length === 0) {
             hasStartedRecording.current = true;
             startRecording();
-        // }
-    }, []);
+        }
+    }, [segments?.length, startRecording]);
 
     
+
+    const workspaceId = conversation?.workspaceId;
 
     const uploadAudio = async (blob) => {
         try {
             const formData = new FormData();
             formData.append('file', blob);
             formData.append('conversationId', conversation?._id);
-            formData.append('workspaceId', "681896a0b95b90b6f3996ed7");
+            formData.append('workspaceId', workspaceId);
 
             const { data } = await apiInstance.post('/uploads/audio', formData, {
                 headers: {
@@ -106,6 +108,13 @@ const RecordingExperience = () => {
     const handleConfirm = async () => {
         // RULE 1: PREVENT DOUBLE CLICK
         if (isProcessingLocal || !duration) return;
+
+        // Bug 3: Throw early if workspaceId is missing
+        if (!workspaceId) {
+            setPollingError(true);
+            throw new Error("Workspace ID is missing. Cannot finalize recording.");
+        }
+
         setIsProcessingLocal(true);
         setPollingError(false);
 
@@ -120,7 +129,7 @@ const RecordingExperience = () => {
             // STEP 4 - APPEND SEGMENT
             const appendData = {
                 conversationId: conversation?._id,
-                workspaceId: '681896a0b95b90b6f3996ed7',
+                workspaceId,
                 fileUrl,
                 duration: roundVal(duration),
                 startTime: roundVal(0),
@@ -145,7 +154,7 @@ const RecordingExperience = () => {
             try {
                 const ensureRes = await conversationServices.ensureTranscript({
                     conversationId: conversation?._id,
-                    workspaceId: "681896a0b95b90b6f3996ed7"
+                    workspaceId
                 });
                 if (!ensureRes || !ensureRes.success) {
                     throw new Error("Transcript does not exist or GET failed.");
@@ -160,7 +169,7 @@ const RecordingExperience = () => {
             try {
                 const triggerRes = await conversationServices.triggerTranscription({
                     conversationId: conversation?._id,
-                    workspaceId: "681896a0b95b90b6f3996ed7"
+                    workspaceId
                 });
                 if (!triggerRes.success) console.error("Transcription trigger failed:", triggerRes.error);
             } catch (err) {
@@ -168,16 +177,8 @@ const RecordingExperience = () => {
             }
 
             // STEP 7 - UPDATE STATE
+            // Bug 1: Only call setConversation, let useEffect polling take over
             setConversation({ ...conversation, status: "processing" });
-
-            // STEP 8 - START POLLING (Interval: 2-3 seconds)
-            if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
-            pollingIntervalRef.current = setInterval(() => {
-                getConversation({ 
-                    conversationId: conversation?._id, 
-                    workspaceId: "681896a0b95b90b6f3996ed7"
-                });
-            }, 3000);
 
         } catch (error) {
             console.error("Recording Finalization Error:", error);

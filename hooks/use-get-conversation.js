@@ -19,40 +19,45 @@ const useGetConversation = () => {
 
         try {
             const response = await ApiService.getConversation(conversationId, workspaceId);
+            const conversationData = response?.data;
 
-          
-            const conversationData = response?.data?.data || response?.data || response;
-
-            if (conversationData) {
-                // Use setTimeline to ensure segments and tags are also processed/mapped
-                setTimeline({
-                    conversation: {
-                        _id: conversationData.conversation._id,
-                        title: conversationData.conversation.title,
-                        emoji: conversationData.conversation.emoji,
-                        description: conversationData.conversation.description,
-                        totalDuration: conversationData.conversation.totalDuration,
-                        createdAt: conversationData.conversation.createdAt,
-                        isStarred: conversationData.conversation.isStarred,
-                        status: conversationData.conversation.status, // Ensure status is synced
-                        formattedDuration: formatDuration(conversationData.conversation.totalDuration),
-                        formattedCreatedAt: formatCreatedAt(conversationData.conversation.createdAt)
-                    },
-                    segments: conversationData.segments || [],
-                    tags: conversationData.tags || []
-                });
+            if (!conversationData?.conversation) {
+                setError("Invalid response shape");
+                setIsLoading(false);
+                setStoreIsLoading(false);
+                return null;
             }
-            
+
+            const { conversation, segments, tags, transcript } = conversationData;
+
+            setTimeline({
+                conversation: {
+                    _id: conversation._id,
+                    workspaceId: conversation.workspaceId,
+                    sourceType: conversation.sourceType,
+                    title: conversation.title,
+                    emoji: conversation.emoji,
+                    description: conversation.description,
+                    totalDuration: conversation.totalDuration,
+                    createdAt: conversation.createdAt,
+                    isStarred: conversation.isStarred,
+                    status: conversation.status,
+                    formattedDuration: formatDuration(conversation.totalDuration),
+                    formattedCreatedAt: formatCreatedAt(conversation.createdAt)
+                },
+                segments: segments || [],
+                tags: tags || [],
+                transcript: transcript || null
+            });
 
             setIsLoading(false);
             setStoreIsLoading(false);
-            // return conversationData;
         } catch (err) {
             setError(err);
             setIsLoading(false);
             setStoreIsLoading(false);
             return null;
-        } 
+        }
     };
 
     return {

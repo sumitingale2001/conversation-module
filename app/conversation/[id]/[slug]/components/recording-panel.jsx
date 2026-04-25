@@ -18,7 +18,7 @@ const formatTimer = (seconds) => {
 
 const RecordingPanel = ({ handleReset, handleConfirm }) => {
     const { conversation } = useConversationStore();
-    const { isPaused, isRecording, duration, pauseRecording, resumeRecording } = useRecordingStore();
+    const { isPaused, isRecording, duration, pauseRecording, resumeRecording, mediaStream } = useRecordingStore();
     
     const isProcessing = conversation?.status === "processing";
 
@@ -55,7 +55,7 @@ const RecordingPanel = ({ handleReset, handleConfirm }) => {
             </div>
 
             <div className="px-5 pb-2">
-                <StaticWaveform />
+                <StaticWaveform mediaStream={mediaStream} />
             </div>
 
             <div className="flex items-center justify-between px-5 pb-2 pt-1">
