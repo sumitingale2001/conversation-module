@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronRight, MoreHorizontal, FileText, Loader2 } from 'lucide-react';
+import { ChevronDown, MoreHorizontal, FileText, Loader2 } from 'lucide-react';
 import useConversationStore from '../../../../../store/conversation.store';
 import { conversationServices } from '../../../../../services/conversationServices';
 import { workspaceId } from '../../../../../utils/conversation.utils';
@@ -18,6 +18,20 @@ const formatMs = (ms) => {
     return `${h}:${m}:${s}`;
 };
 
+const getTimeAgo = (dateString) => {
+    const now = new Date();
+    const then = new Date(dateString);
+    const diffMs = now - then;
+    const diffMins = Math.floor(diffMs / 60000);
+    if (diffMins < 1) return "just now";
+    if (diffMins === 1) return "1 min ago";
+    if (diffMins < 60) return `${diffMins} mins ago`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours === 1) return "1 hour ago";
+    if (diffHours < 24) return `${diffHours} hours ago`;
+    return `${Math.floor(diffHours / 24)} days ago`;
+};
+
 const TranscriptCard = () => {
     const { conversation, segments, transcript, setConversation } = useConversationStore();
     const { isRecording, startRecording } = useRecordingStore();
@@ -28,6 +42,7 @@ const TranscriptCard = () => {
     const [error, setError] = useState({ segmentId: null, message: "" });
     const [isUploading, setIsUploading] = useState(false);
     const [uploadError, setUploadError] = useState(null);
+    const [expandedSegments, setExpandedSegments] = useState({});
 
     const fileInputRef = useRef(null);
     const getConversationRef = useRef(getConversation);
@@ -35,69 +50,64 @@ const TranscriptCard = () => {
     const isProcessing = conversation?.status === "processing";
     const isCompleted = conversation?.status === "completed";
 
+    const toggleExpanded = (segmentId) => {
+        setExpandedSegments(prev => ({
+            ...prev,
+            [segmentId]: !prev[segmentId],
+        }));
+    };
+
     // Sync getConversationRef to avoid stale closures in async handlers
     useEffect(() => { 
         getConversationRef.current = getConversation; 
     });
 
-    // REACTION TO POLLING RESULTS
-    useEffect(() => {
-        // Reacts to polling results from RecordingExperience.
-        // Clears loading/sets error when transcription job resolves.
-        if (conversation?.status === "completed") {
-            setTranscribingSegmentId(null);
-            setError({ segmentId: null, message: "" });
-        } else if (conversation?.status === "failed") {
-            setTranscribingSegmentId(null);
-            setError({ 
-                segmentId: transcribingSegmentId, 
-                message: "Transcription failed. Please try again." 
-            });
-        }
-    }, [conversation?.status]);
 
     // TRANSCRIBE BUTTON CLICK HANDLER
     const onTranscribeClick = async (segmentId) => {
-        // Guard 1 & 2: prevent concurrent transcription attempts
         if (transcribingSegmentId !== null || isProcessing) return;
 
-        // Step 1 — Set transcribingSegmentId to this segmentId (shows loading state).
         setTranscribingSegmentId(segmentId);
         setError({ segmentId: null, message: "" });
 
         try {
-            // Step 2 — Must ensure transcript document exists before triggering.
-            // If this fails, the job would have nothing to write results into.
+            // Step 1 — Ensure transcript document exists
             const ensureRes = await conversationServices.ensureTranscript({
                 conversationId: conversation?._id,
                 workspaceId
             });
-
-            if (!ensureRes || !ensureRes.success) {
+            if (!ensureRes?.success) {
                 setError({ segmentId, message: "Transcription failed. Please try again." });
                 setTranscribingSegmentId(null);
                 return;
             }
 
-            // Step 3 — Call conversationServices.triggerTranscription(...)
+            // Step 2 — Trigger transcription and WAIT for it to complete
+            // Backend now transcribes synchronously — this call resolves only when done
             const triggerRes = await conversationServices.triggerTranscription({
                 conversationId: conversation?._id,
-                workspaceId
+                workspaceId,
+                segmentId,
             });
 
-            if (!triggerRes || !triggerRes.success) {
+            if (!triggerRes?.success) {
                 setError({ segmentId, message: "Transcription failed. Please try again." });
                 setTranscribingSegmentId(null);
                 return;
             }
 
-            // Setting status to 'processing' here activates the polling
-            // useEffect in RecordingExperience which polls every 3s until completed/failed.
-            setConversation({ ...conversation, status: "processing" });
+            // Step 3 — Fetch updated conversation to get new transcript blocks
+            // No polling needed — transcription is already complete at this point
+            await getConversationRef.current({
+                conversationId: conversation?._id,
+                workspaceId,
+                silent: true,
+            });
 
         } catch (err) {
             console.error("[TranscriptCard] onTranscribeClick failed:", err);
             setError({ segmentId, message: "Transcription failed. Please try again." });
+        } finally {
             setTranscribingSegmentId(null);
         }
     };
@@ -181,56 +191,88 @@ const TranscriptCard = () => {
     const isActionsDisabled = isRecording || isUploading || transcribingSegmentId !== null || isProcessing;
 
     return (
-        <div className="flex flex-col gap-3 py-4">
+        <div className="flex flex-col gap-3 py-2 mx-auto w-full max-w-3xl">
             {segments.map((segment, index) => {
                 const title = segment.name || conversation?.title || (index === 0 ? "[Untitled]" : `[Untitled - ${index + 1}]`);
                 
                 // Determine if this segment has blocks.
-                const segmentBlocks = transcript?.blocks?.filter(b => 
-                    (b.segmentId === segment._id || !b.segmentId) && b.isActive && !b.isDeleted
-                ) || [];
+                // Block-to-segment association:
+                // - Blocks with segmentId: matched exactly to their source segment.
+                // - Blocks without segmentId (legacy): shown under first segment only.
+                // - String comparison used because API returns ObjectIds as strings.
+                const segmentBlocks = transcript?.blocks?.filter(b => {
+                    // Exclude inactive or deleted blocks always.
+                    if (!b.isActive || b.isDeleted) return false;
+
+                    // If block has a segmentId, it must match this segment exactly.
+                    // String comparison is required because MongoDB ObjectIds from the 
+                    // API response are strings, not ObjectId instances, on the frontend.
+                    if (b.segmentId) {
+                        return b.segmentId.toString() === segment._id.toString();
+                    }
+
+                    // Legacy blocks (created before segmentId was added to the schema)
+                    // have no segmentId. Show them only under the first segment (index === 0)
+                    // to avoid duplicating them across all segment cards.
+                    return index === 0;
+                }) || [];
                 
                 const hasBlocks = segmentBlocks.length > 0;
-                const isSegmentCompleted = isCompleted && hasBlocks;
+                // A segment is completed if it has its own blocks — regardless of 
+                // the overall conversation status. This correctly handles multi-segment 
+                // conversations where segments are transcribed independently.
+                const isSegmentCompleted = hasBlocks;
                 const isThisSegmentTranscribing = transcribingSegmentId === segment._id;
                 const isDisabled = (transcribingSegmentId !== null && !isThisSegmentTranscribing) || (isProcessing && !isThisSegmentTranscribing);
                 const hasError = error.segmentId === segment._id;
 
-                // Figma: Duration | Recorded X mins ago
-                // For now matching the format as closely as possible
-                const statusLabel = isThisSegmentTranscribing
-                    ? `${formatMs(segment.duration * 1000)} | Processing...`
+                const recordedLabel = isThisSegmentTranscribing
+                    ? "Transcribing — this may take a moment for large files..."
                     : isSegmentCompleted
-                        ? `${formatMs(segment.duration * 1000)} | Transcribed`
-                        : `${formatMs(segment.duration * 1000)} | Recorded just now`;
+                        ? "Transcribed"
+                        : segment.recordedAt
+                            ? `Recorded ${getTimeAgo(segment.recordedAt)}`
+                            : "Recording in-progress";
 
                 return (
                     <div 
                         key={segment._id}
-                        className={`mx-auto w-full max-w-3xl rounded-xl bg-white shadow-sm border border-gray-100 transition-all ${isThisSegmentTranscribing ? 'opacity-80 pointer-events-none' : ''}`}
+                        className={`group flex flex-col rounded-lg  bg-card transition-colors hover:bg-accent/40 ${isThisSegmentTranscribing ? 'opacity-80' : ''}`}
                     >
                         {/* Card Header */}
-                        <div className="flex items-center justify-between px-5 py-4">
-                            <div className="flex items-center gap-3">
-                                <button className="text-gray-400 hover:text-gray-600 transition-colors">
-                                    <ChevronRight className="h-4 w-4" />
-                                </button>
-                                <div>
-                                    <div className="text-[14px] font-semibold text-gray-900 leading-tight">{title}</div>
-                                    <div className="text-[12px] text-gray-400 mt-1">{statusLabel}</div>
+                        <div className="flex items-start gap-2 px-3 py-3">
+                            {/* Chevron — functional expand/collapse */}
+                            <button
+                                onClick={() => toggleExpanded(segment._id)}
+                                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+                                aria-label={expandedSegments[segment._id] ? "Collapse" : "Expand"}
+                            >
+                                <ChevronDown
+                                    className={`h-4 w-4 transition-transform duration-200 ${expandedSegments[segment._id] ? 'rotate-0' : '-rotate-90'}`}
+                                />
+                            </button>
+
+                            {/* Title + status */}
+                            <div className="min-w-0 flex-1">
+                                <div className="text-sm font-semibold text-foreground">{title}</div>
+                                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                                    <span>{formatMs(segment.duration * 1000)}</span>
+                                    <span className="text-border">|</span>
+                                    <span>{recordedLabel}</span>
                                 </div>
                             </div>
-                            <div className="flex items-center gap-4">
+
+                            {/* Actions */}
+                            <div className="flex items-center gap-3">
                                 {!isSegmentCompleted && (
-                                    <button 
-                                        className={`text-[14px] font-semibold transition-colors
-                                            ${isThisSegmentTranscribing ? 'text-gray-400' : isDisabled ? 'text-gray-300 cursor-not-allowed' : 'text-indigo-600 hover:text-indigo-700'}`}
+                                    <button
+                                        className={`text-sm font-medium transition-colors ${isThisSegmentTranscribing ? 'text-muted-foreground cursor-default' : isDisabled ? 'text-muted-foreground/40 cursor-not-allowed' : 'text-primary hover:underline'}`}
                                         disabled={isThisSegmentTranscribing || isDisabled}
                                         onClick={() => onTranscribeClick(segment._id)}
                                         title={isDisabled ? "Another transcription is in progress" : ""}
                                     >
                                         {isThisSegmentTranscribing ? (
-                                            <div className="flex items-center gap-2">
+                                            <div className="flex items-center gap-1.5">
                                                 <Loader2 className="h-3 w-3 animate-spin" />
                                                 <span>Transcribing...</span>
                                             </div>
@@ -239,15 +281,18 @@ const TranscriptCard = () => {
                                         )}
                                     </button>
                                 )}
-                                <button className="text-gray-400 hover:text-gray-600 transition-colors">
-                                    <MoreHorizontal className="h-5 w-5" />
+                                <button
+                                    className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                                    aria-label="More options"
+                                >
+                                    <MoreHorizontal className="h-4 w-4" />
                                 </button>
                             </div>
                         </div>
 
-                        {/* Error Message Row */}
+                        {/* Error Message Row - Always visible regardless of expanded state */}
                         {hasError && (
-                            <div className="px-5 py-2 bg-red-50 border-t border-red-100 flex items-center justify-between">
+                            <div className="px-5 py-2 bg-red-50  border-red-100 flex items-center justify-between">
                                 <span className="text-[11px] text-red-600 font-medium">{error.message}</span>
                                 <button 
                                     onClick={() => onTranscribeClick(segment._id)}
@@ -258,33 +303,39 @@ const TranscriptCard = () => {
                             </div>
                         )}
 
-                        {/* Card Body - Only shown if it has blocks and not transcribing */}
-                        {hasBlocks && !isThisSegmentTranscribing && (
-                            <div className="px-5 pb-5 pt-0 border-t border-gray-50 mt-1">
-                                <div className="flex flex-col gap-1 mt-4">
-                                    {segmentBlocks.map((block) => (
-                                        <div key={block._id} className="group flex gap-3 rounded-lg px-3 py-2 hover:bg-gray-50 transition-colors">
-                                            <span className="mt-0.5 shrink-0 text-[11px] font-mono text-gray-300 group-hover:text-gray-400 w-12 text-right">
-                                                {formatMs(block.startTimeMs).split(':').slice(1).join(':')}
-                                            </span>
-                                            <p className="text-sm leading-relaxed text-gray-800">
-                                                {block.text}
-                                            </p>
+                        {/* Card Body - Only shown if expanded */}
+                        {expandedSegments[segment._id] && (
+                            <div className="">
+                                {isThisSegmentTranscribing ? (
+                                    /* Processing empty state */
+                                    <div className="px-5 py-12 flex flex-col items-center justify-center">
+                                        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-yellow-400 mb-4 shadow-sm">
+                                            <Loader2 className="h-8 w-8 text-white animate-spin" strokeWidth={2} />
                                         </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-                        
-                        {/* Transcribing Body */}
-                        {isThisSegmentTranscribing && (
-                            <div className="px-5 py-12 border-t border-gray-50 flex flex-col items-center justify-center">
-                                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-yellow-400 mb-4 shadow-sm">
-                                    <Loader2 className="h-8 w-8 text-white animate-spin" strokeWidth={2} />
-                                </div>
-                                <p className="max-w-sm text-center text-xs leading-relaxed text-gray-500">
-                                    Processing your recording. This may take a moment...
-                                </p>
+                                        <p className="max-w-sm text-center text-xs leading-relaxed text-gray-500">
+                                            Processing your recording. This may take a moment...
+                                        </p>
+                                    </div>
+                                ) : hasBlocks ? (
+                                    /* Transcript blocks */
+                                    <div className="px-5 py-4">
+                                        <p className="text-sm leading-relaxed text-gray-800">
+                                            {segmentBlocks.map((elem) => elem.text).join(" ")}
+                                        </p>
+                                    </div>
+                                ) : (
+                                    /* Empty state — no transcript yet */
+                                    <div className="flex flex-col items-center justify-center px-6 py-12">
+                                        <div className="relative mb-4">
+                                            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100">
+                                                <FileText className="h-8 w-8 text-gray-400" strokeWidth={2} />
+                                            </div>
+                                        </div>
+                                        <p className="max-w-sm text-center text-xs leading-relaxed text-gray-500">
+                                            {isSegmentCompleted ? "No transcription data found for this segment." : "Transcript will appear here once you click Transcribe."}
+                                        </p>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -292,7 +343,7 @@ const TranscriptCard = () => {
             })}
 
             {/* Action Buttons Row */}
-            <div className="mx-auto w-full max-w-3xl flex flex-col gap-2 pt-2">
+            <div className="mx-auto w-full max-w-3xl flex flex-col gap-2 pt-3">
                 <div className="flex items-center gap-6 px-1">
                     <button 
                         disabled={isActionsDisabled}
@@ -300,7 +351,7 @@ const TranscriptCard = () => {
                             if (isRecording) return;
                             startRecording();
                         }}
-                        className="flex items-center gap-2 text-[14px] font-semibold text-gray-800 hover:text-black disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none transition-colors"
+                        className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none transition-colors"
                     >
                         <img src="/mic.svg" className="h-4 w-4" alt="mic" />
                         Add recording
@@ -308,12 +359,12 @@ const TranscriptCard = () => {
                     <button 
                         disabled={isActionsDisabled}
                         onClick={() => fileInputRef.current.click()}
-                        className="flex items-center gap-2 text-[14px] font-semibold text-gray-800 hover:text-black disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none transition-colors"
+                        className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none transition-colors"
                     >
                         {isUploading ? (
                             <>
-                                <Loader2 className="animate-spin h-3.5 w-3.5 text-gray-500" />
-                                <span className="text-gray-500">Uploading...</span>
+                                <Loader2 className="animate-spin h-3.5 w-3.5" />
+                                <span>Uploading...</span>
                             </>
                         ) : (
                             <>

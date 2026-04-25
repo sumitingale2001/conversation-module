@@ -21,11 +21,7 @@ const RecordingExperience = ({ slug }) => {
     const { stopRecording, reset, startRecording, duration, audioChunks, isRecording,    } = useRecordingStore();
     const { getConversation } = useGetConversation();
 
-    const [pollingError, setPollingError] = useState(false);
     const [isProcessingLocal, setIsProcessingLocal] = useState(false);
-    const isProcessing = conversation?.status === "processing";
-    const pollingIntervalRef = useRef(null);
-    const timeoutRef = useRef(null);
     const hasStartedRecording = useRef(false);
 
     // FIX 1a: Create a ref to keep getConversation current without triggering re-renders in effects.
@@ -37,54 +33,7 @@ const RecordingExperience = ({ slug }) => {
         getConversationRef.current = getConversation;
     });
 
-    // 🔥 POLLING SYSTEM (MANDATORY)
-    // (a) Monitors conversation status while in "processing" state.
-    // (b) Dependencies: [conversation?.status, conversation?._id]. 
-    // workspaceId is a constant import and does not need to be in the array.
-    // Polls only when transcription is actively running.
-    // "pending" = segment uploaded, transcription not yet started — no polling.
-    // "processing" = Transcribe button clicked, job queued — polling active.
-    useEffect(() => {
-        if (conversation?.status === "processing") {
-            // Prevent multiple intervals
-            if (pollingIntervalRef.current) return;
-            
-            setPollingError(false);
-            
-            // Interval: 2-3 seconds
-            pollingIntervalRef.current = setInterval(() => {
-                // Use the ref to avoid stale closures and unnecessary dependencies.
-                getConversationRef.current({ conversationId: conversation._id, workspaceId });
-            }, 3000);
-
-            // Safety timeout: 60s
-            timeoutRef.current = setTimeout(() => {
-                if (pollingIntervalRef.current) {
-                    clearInterval(pollingIntervalRef.current);
-                    pollingIntervalRef.current = null;
-                }
-                setPollingError(true);
-            }, 60000);
-        } else if (conversation?.status === "completed" || conversation?.status === "failed") {
-            if (pollingIntervalRef.current) {
-                clearInterval(pollingIntervalRef.current);
-                pollingIntervalRef.current = null;
-            }
-            if (timeoutRef.current) clearTimeout(timeoutRef.current);
-
-            // Final fetch to ensure segments are updated once status is final.
-            if (conversation?.status === "completed") {
-                getConversationRef.current({ conversationId: conversation._id, workspaceId });
-            }
-        }
-
-        // Cleanup on unmount
-        return () => {
-            if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
-            if (timeoutRef.current) clearTimeout(timeoutRef.current);
-            pollingIntervalRef.current = null;
-        };
-    }, [conversation?.status, conversation?._id]);
+    const [error, setError] = useState(false);
 
     const handleReset = () => {
         reset();
@@ -141,12 +90,12 @@ const RecordingExperience = ({ slug }) => {
 
         // Bug 3: Throw early if workspaceId is missing
         if (!workspaceId) {
-            setPollingError(true);
+            setError(true);
             throw new Error("Workspace ID is missing. Cannot finalize recording.");
         }
 
         setIsProcessingLocal(true);
-        setPollingError(false);
+        setError(false);
 
         try {
             // STEP 1 & 2 - STOP RECORDING & GET FINAL BLOB
@@ -200,7 +149,7 @@ const RecordingExperience = ({ slug }) => {
 
         } catch (error) {
             console.error("Recording Finalization Error:", error);
-            setPollingError(true);
+            setError(true);
         } finally {
             setIsProcessingLocal(false);
         }
@@ -210,9 +159,9 @@ const RecordingExperience = ({ slug }) => {
     return (
         <>
         <div className="flex flex-col h-full w-full bg-gray-50/30">
-            {pollingError && (
+            {error && (
                 <div className="w-full bg-red-100 text-red-600 text-xs py-2 px-4 text-center font-medium shadow-sm z-50">
-                    Processing failed. Please retry.
+                    Operation failed. Please retry.
                 </div>
             )}
             
