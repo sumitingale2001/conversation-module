@@ -125,16 +125,29 @@ export const conversationServices = {
     return this.replaceSegment(payload);
   },
 
-  async ensureTranscript(payload) {
-    if (!payload.conversationId || !payload.workspaceId) return null;
-    return await request(
-      apiInstance.get(`/transcript?conversationId=${payload.conversationId}&workspaceId=${payload.workspaceId}`)
-    );
+  ensureTranscript: async ({ conversationId, workspaceId }) => {
+    try {
+      const { data } = await apiInstance.get(
+        `/transcript?conversationId=${conversationId}&workspaceId=${workspaceId}`
+      );
+      return data;
+    } catch (err) {
+      console.error("[conversationServices] ensureTranscript failed:", err);
+      return { success: false, error: err?.response?.data?.error || err.message };
+    }
   },
 
-  async triggerTranscription(payload) {
-    if (!payload.conversationId || !payload.workspaceId) return null;
-    return await request(apiInstance.post("/transcript/transcribe", payload));
+  triggerTranscription: async ({ conversationId, workspaceId }) => {
+    try {
+      const { data } = await apiInstance.post("/transcript/transcribe", {
+        conversationId,
+        workspaceId,
+      });
+      return data;
+    } catch (err) {
+      console.error("[conversationServices] triggerTranscription failed:", err);
+      return { success: false, error: err?.response?.data?.error || err.message };
+    }
   },
 
   // --- TAG APIs ---

@@ -1,3 +1,9 @@
+/**
+ * ConversationContent Component
+ * Main layout wrapper for the conversation experience.
+ * FIX: The left panel now always renders <RecordingExperience /> to prevent unmounting during mode transitions.
+ */
+
 'use client';
 
 import RecordingExperience from "./recording-experience";
@@ -5,7 +11,7 @@ import TranscriptCard from "./transcript-card";
 import useConversationStore from "../../../../../store/conversation.store";
 import { Redo2, Undo2 } from "lucide-react";
 
-const ConversationContent = () => {
+const ConversationContent = ({ slug }) => {
     const viewMode = useConversationStore((state) => state.viewMode);
     const conversation = useConversationStore((state) => state.conversation);
 
@@ -13,7 +19,7 @@ const ConversationContent = () => {
 
     return (
         <div className="w-full h-full flex overflow-hidden">
-            {/* Left Section */}
+            {/* Left Section - Rendered for "left" and "split" modes */}
             {(viewMode === "split" || viewMode === "left") && (
                 <div className={`flex flex-col h-full transition-all duration-300 ${viewMode === "split" ? "w-1/2 border-r border-gray-200" : "w-full"}`}>
                     <div className="flex items-center justify-between px-5 py-2 shrink-0">
@@ -29,15 +35,14 @@ const ConversationContent = () => {
                     </div>
 
                     <div className="flex flex-col flex-1 p-0 overflow-y-auto">
-                        {viewMode === "left"
-                            && <RecordingExperience />
-                          
-                        }
+                        {/* RecordingExperience is ALWAYS rendered in the left panel. 
+                            It internally handles whether to show recording controls or transcript content. */}
+                        <RecordingExperience slug={slug} />
                     </div>
                 </div>
             )}
 
-            {/* Right Section */}
+            {/* Right Section - Rendered ONLY for "split" or "right" modes */}
             {(viewMode === "split" || viewMode === "right") && (
                 <div className={`flex flex-col h-full overflow-y-auto bg-gray-50 transition-all duration-300 ${viewMode === "split" ? "w-1/2" : "w-full"}`}>
                     <div className="w-full h-full flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-xl bg-white text-gray-400 font-medium p-8 m-6 max-w-4xl mx-auto">

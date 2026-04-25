@@ -6,7 +6,7 @@ const Page = async ({ params }) => {
     return (
         <>
             <ViewModeController slug={slug} id={id} />
-            <ConversationContent />
+            <ConversationContent slug={slug} />
         </>
     );
 }

@@ -1,5 +1,9 @@
 import { create } from 'zustand';
 
+/**
+ * Recording Store
+ * Manages the MediaRecorder lifecycle, audio chunk accumulation, and recording state.
+ */
 export const useRecordingStore = create((set, get) => ({
     mediaRecorder: null,
     mediaStream: null,
@@ -21,6 +25,8 @@ export const useRecordingStore = create((set, get) => ({
                 mimeType: 'audio/webm'
             });
 
+            // FIX 4: Set ondataavailable BEFORE starting the recorder to prevent race conditions
+            // where the first chunk is emitted before the handler is attached.
             recorder.ondataavailable = (event) => {
                 if (event.data && event.data.size > 0) {
                     set((state) => {
@@ -30,9 +36,12 @@ export const useRecordingStore = create((set, get) => ({
                 }
             };
 
-            recorder.start(1000); // emit every second
+            // timeslice = 1000ms: Captures data in 1-second intervals to avoid large memory spikes.
+            recorder.start(1000); 
 
-            // ✅ FORCE CHUNK FLUSH (CRITICAL FIX)
+            // ✅ FORCE CHUNK FLUSH
+            // interval = 1000ms: Periodically requests data from the recorder to ensure chunks 
+            // are actively being pushed to the store during long recording sessions.
             const flushInterval = setInterval(() => {
                 try {
                     if (recorder.state === "recording") {
@@ -50,7 +59,7 @@ export const useRecordingStore = create((set, get) => ({
             set({
                 mediaRecorder: recorder,
                 mediaStream: stream,
-                audioChunks: [], // reset cleanly
+                audioChunks: [], // Clean reset of chunks for the new session
                 isRecording: true,
                 isPaused: false,
                 duration: 0,
@@ -59,7 +68,7 @@ export const useRecordingStore = create((set, get) => ({
             });
 
         } catch (err) {
-            console.error("startRecording failed:", err);
+            console.error("[RecordingStore] startRecording failed:", err);
         }
     },
 
@@ -67,23 +76,44 @@ export const useRecordingStore = create((set, get) => ({
     pauseRecording: () => {
         const { mediaRecorder, intervalId, flushInterval } = get();
 
-        if (mediaRecorder?.state === "recording") {
-            mediaRecorder.pause();
+        // Guard: if mediaRecorder state is not "recording", return early with a warning log
+        if (mediaRecorder?.state !== "recording") {
+            console.warn("[RecordingStore] pauseRecording called but recorder is not recording. Current state:", mediaRecorder?.state);
+            return;
         }
+
+        // requestData MUST be called before pause() to flush buffered 
+        // audio. Without this, the last buffered chunk is lost on pause.
+        try {
+            mediaRecorder.requestData();
+        } catch (e) {
+            console.error("[RecordingStore] Failed to flush buffered audio before pause:", e);
+        }
+
+        mediaRecorder.pause();
 
         if (intervalId) clearInterval(intervalId);
         if (flushInterval) clearInterval(flushInterval);
 
-        set({ isPaused: true, intervalId: null, flushInterval: null });
+        set({ 
+            isPaused: true, 
+            isRecording: true, // explicitly — session is still active
+            intervalId: null, 
+            flushInterval: null 
+        });
     },
 
     // ✅ RESUME
     resumeRecording: () => {
         const { mediaRecorder } = get();
-
-        if (mediaRecorder?.state === "paused") {
-            mediaRecorder.resume();
+        
+        // Guard: prevents orphaned timers and silent failures
+        if (!mediaRecorder || mediaRecorder.state !== "paused") {
+            console.warn("[RecordingStore] resumeRecording called but recorder is not in paused state. Current state:", mediaRecorder?.state);
+            return;
         }
+
+        mediaRecorder.resume();
 
         const timer = setInterval(() => {
             set((s) => ({ duration: s.duration + 1 }));
@@ -99,23 +129,49 @@ export const useRecordingStore = create((set, get) => ({
             }
         }, 1000);
 
-        set({ isPaused: false, intervalId: timer, flushInterval: newFlushInterval });
+        set({ 
+            isPaused: false, 
+            isRecording: true, 
+            intervalId: timer, 
+            flushInterval: newFlushInterval 
+        });
     },
 
-    // ✅ STOP RECORDING (FIXED PROPERLY)
+    // ✅ STOP RECORDING
     stopRecording: async () => {
         const { mediaRecorder, mediaStream, intervalId, flushInterval } = get();
+        const capturedDuration = get().duration; // capture before any state wipe
+
+        if (!mediaRecorder) return { blob: null, duration: 0 };
+
+        // PAUSED STATE HANDLING — if user paused then confirmed:
+        // Resume briefly to allow final chunk to be emitted before stopping.
+        if (mediaRecorder.state === "paused") {
+            try {
+                mediaRecorder.resume();
+                await new Promise(r => setTimeout(r, 150));
+                mediaRecorder.requestData();
+                await new Promise(r => setTimeout(r, 100));
+            } catch (e) {
+                console.warn("[RecordingStore] Could not flush paused recorder:", e);
+            }
+        } else if (mediaRecorder.state === "recording") {
+            try {
+                mediaRecorder.requestData();
+                await new Promise(r => setTimeout(r, 100));
+            } catch (e) {
+                console.warn("[RecordingStore] Could not flush recording recorder:", e);
+            }
+        }
 
         return new Promise((resolve, reject) => {
-            if (!mediaRecorder) return resolve(null);
-
             mediaRecorder.onstop = () => {
                 try {
                     const allChunks = get().audioChunks;
                     const blob = new Blob(allChunks, { type: 'audio/webm' });
 
                     if (!blob || blob.size === 0) {
-                        throw new Error("Empty audio blob generated");
+                        throw new Error("[RecordingStore] Empty audio blob generated");
                     }
 
                     // cleanup
@@ -134,20 +190,16 @@ export const useRecordingStore = create((set, get) => ({
                         flushInterval: null
                     });
 
-                    resolve(blob);
+                    // Return object with both blob and final duration
+                    resolve({ blob, duration: capturedDuration });
                 } catch (err) {
+                    console.error("[RecordingStore] stopRecording failed in onstop:", err);
                     reject(err);
                 }
             };
 
-            // ✅ FORCE LAST DATA
+            // ✅ TRIGGER STOP
             if (mediaRecorder.state !== "inactive") {
-                try {
-                    if (mediaRecorder.state === "recording") {
-                        mediaRecorder.requestData();
-                    }
-                } catch (e) {
-                }
                 mediaRecorder.stop();
             } else {
                 mediaRecorder.onstop();

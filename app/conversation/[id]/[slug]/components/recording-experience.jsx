@@ -1,3 +1,8 @@
+/**
+ * RecordingExperience Component
+ * Manages the recording session, status polling, and transcript rendering.
+ */
+
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -6,14 +11,14 @@ import useConversationStore from '../../../../../store/conversation.store';
 import { useRecordingStore } from '../../../../../store/recording.store';
 import useGetConversation from '../../../../../hooks/use-get-conversation';
 import apiInstance from '../../../../../config/apiInstance';
-import axios from 'axios';
 import { conversationServices, roundVal } from '../../../../../services/conversationServices';
 import TranscriptCard from './transcript-card';
 import RecordingPanel from './recording-panel';
+import { workspaceId } from '../../../../../utils/conversation.utils';
 
-const RecordingExperience = () => {
+const RecordingExperience = ({ slug }) => {
     const { conversation, setConversation, segments } = useConversationStore();
-    const { stopRecording, reset, startRecording, duration, audioChunks, isRecording,  } = useRecordingStore();
+    const { stopRecording, reset, startRecording, duration, audioChunks, isRecording,    } = useRecordingStore();
     const { getConversation } = useGetConversation();
 
     const [pollingError, setPollingError] = useState(false);
@@ -23,7 +28,22 @@ const RecordingExperience = () => {
     const timeoutRef = useRef(null);
     const hasStartedRecording = useRef(false);
 
+    // FIX 1a: Create a ref to keep getConversation current without triggering re-renders in effects.
+    const getConversationRef = useRef(getConversation);
+
+    // (a) Syncs the ref with the latest getConversation function from the hook.
+    // (b) No dependency array - runs every render to ensure the ref is never stale.
+    useEffect(() => {
+        getConversationRef.current = getConversation;
+    });
+
     // 🔥 POLLING SYSTEM (MANDATORY)
+    // (a) Monitors conversation status while in "processing" state.
+    // (b) Dependencies: [conversation?.status, conversation?._id]. 
+    // workspaceId is a constant import and does not need to be in the array.
+    // Polls only when transcription is actively running.
+    // "pending" = segment uploaded, transcription not yet started — no polling.
+    // "processing" = Transcribe button clicked, job queued — polling active.
     useEffect(() => {
         if (conversation?.status === "processing") {
             // Prevent multiple intervals
@@ -33,7 +53,8 @@ const RecordingExperience = () => {
             
             // Interval: 2-3 seconds
             pollingIntervalRef.current = setInterval(() => {
-                getConversation({ conversationId: conversation._id, workspaceId: conversation.workspaceId });
+                // Use the ref to avoid stale closures and unnecessary dependencies.
+                getConversationRef.current({ conversationId: conversation._id, workspaceId });
             }, 3000);
 
             // Safety timeout: 60s
@@ -51,9 +72,9 @@ const RecordingExperience = () => {
             }
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
 
-            // Bug 1: One final fetch to ensure segments are updated
+            // Final fetch to ensure segments are updated once status is final.
             if (conversation?.status === "completed") {
-                getConversation({ conversationId: conversation._id, workspaceId: conversation.workspaceId });
+                getConversationRef.current({ conversationId: conversation._id, workspaceId });
             }
         }
 
@@ -63,23 +84,32 @@ const RecordingExperience = () => {
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
             pollingIntervalRef.current = null;
         };
-    }, [conversation?.status, conversation?._id, conversation?.workspaceId, getConversation]);
+    }, [conversation?.status, conversation?._id]);
 
     const handleReset = () => {
         reset();
     };
     
-
+    // Auto-start guard: waits for conversation to load before checking segments.
+    // Using conversation?._id as the gate ensures we never read an empty 
+    // segments array that simply hasn't been fetched yet.
+    // hasStartedRecording ref ensures this only fires once per session.
     useEffect(() => {
-        if (!hasStartedRecording.current && segments?.length === 0) {
+        // Wait until conversation is loaded from server (conversation._id exists).
+        // Only then check if segments are empty and slug is "instant".
+        // This prevents premature start before the initial getConversation 
+        // fetch resolves, which would incorrectly read segments as [] 
+        // even when the server has existing segments.
+        if (!conversation?._id) return;
+        if (hasStartedRecording.current) return;
+        if (slug !== "instant") return;
+
+        const currentSegments = useConversationStore.getState().segments;
+        if ((currentSegments?.length || 0) === 0) {
             hasStartedRecording.current = true;
             startRecording();
         }
-    }, [segments?.length, startRecording]);
-
-    
-
-    const workspaceId = conversation?.workspaceId;
+    }, [conversation?._id, slug]);
 
     const uploadAudio = async (blob) => {
         try {
@@ -120,8 +150,13 @@ const RecordingExperience = () => {
 
         try {
             // STEP 1 & 2 - STOP RECORDING & GET FINAL BLOB
-            const finalBlob = await stopRecording();
-            if (!finalBlob) throw new Error("Recording failed to generate audio payload.");
+            // FIX 5: Destructure both blob and duration from the returned object.
+            const { blob: finalBlob, duration: finalDuration } = await stopRecording();
+            
+            // Guard: Ensure we have a valid, non-empty recording.
+            if (!finalBlob || finalBlob.size === 0) {
+                throw new Error("Empty audio blob generated. Recording failed.");
+            }
 
             // STEP 3 - UPLOAD TO BACKEND API
             const fileUrl = await uploadAudio(finalBlob);
@@ -131,9 +166,9 @@ const RecordingExperience = () => {
                 conversationId: conversation?._id,
                 workspaceId,
                 fileUrl,
-                duration: roundVal(duration),
+                duration: roundVal(finalDuration), // Use captured duration, not store duration.
                 startTime: roundVal(0),
-                endTime: roundVal(duration),
+                endTime: roundVal(finalDuration),
             };
 
             // RULE 3: APPEND FAIL -> RETRY ONCE
@@ -147,38 +182,21 @@ const RecordingExperience = () => {
             }
 
             // STEP 5 - WAIT 1–1.5 SECONDS (Stabilization buffer)
+            // Gives the server time to persist the appended segment before we fetch.
             await new Promise(resolve => setTimeout(resolve, 1200));
 
-            // ENSURE TRANSCRIPT EXISTS (GET /transcript)
-            // RULE: If GET fails -> STOP. Do NOT trigger transcription
-            try {
-                const ensureRes = await conversationServices.ensureTranscript({
-                    conversationId: conversation?._id,
-                    workspaceId
-                });
-                if (!ensureRes || !ensureRes.success) {
-                    throw new Error("Transcript does not exist or GET failed.");
-                }
-            } catch (err) {
-                console.error("GET /transcript failed, stopping transcription flow:", err);
-                throw new Error("Transcript does not exist or GET failed.");
-            }
-
-            // STEP 6 - TRIGGER TRANSCRIPTION
-            // RULE 3: TRIGGER FAIL -> LOG ONLY
-            try {
-                const triggerRes = await conversationServices.triggerTranscription({
-                    conversationId: conversation?._id,
-                    workspaceId
-                });
-                if (!triggerRes.success) console.error("Transcription trigger failed:", triggerRes.error);
-            } catch (err) {
-                console.error("Transcription trigger error:", err);
-            }
-
-            // STEP 7 - UPDATE STATE
-            // Bug 1: Only call setConversation, let useEffect polling take over
-            setConversation({ ...conversation, status: "processing" });
+            // STEP 6 - REFRESH CONVERSATION FROM SERVER
+            // Fetches the updated conversation including the newly appended segment.
+            // This ensures TranscriptCard shows the new segment immediately after confirm.
+            // We do NOT rely on setConversation({ status: "pending" }) alone because 
+            // that would leave the segments array stale in the store.
+            await getConversationRef.current({
+                conversationId: conversation?._id,
+                workspaceId,
+            });
+            // NOTE: Do NOT manually call setConversation after this. 
+            // getConversation already calls setConversation internally via the hook.
+            // Calling it again would overwrite the freshly fetched data with stale data.
 
         } catch (error) {
             console.error("Recording Finalization Error:", error);
@@ -187,6 +205,7 @@ const RecordingExperience = () => {
             setIsProcessingLocal(false);
         }
     };
+
 
     return (
         <>
@@ -214,3 +233,4 @@ const RecordingExperience = () => {
 };
 
 export default RecordingExperience;
+

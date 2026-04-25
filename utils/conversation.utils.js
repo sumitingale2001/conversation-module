@@ -27,3 +27,7 @@ export const formatCreatedAt = (createdAt) => {
 
     return `${day} ${month}, ${hours}.${minutes} ${ampm}`;
 };
+
+
+export const workspaceId = "681896a0b95b90b6f3996ed7"
+export const userId ="68189687b95b90b6f3996e75"
