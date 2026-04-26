@@ -177,4 +177,9 @@ export const conversationServices = {
     if (!tagInstanceId) return null;
     return await request(apiInstance.delete(`/timeline/tags/delete?tagInstanceId=${tagInstanceId}`));
   },
+
+  async renameSpeaker(payload) {
+    if (!payload.transcriptId || !payload.speakerId || !payload.name) return null;
+    return await request(apiInstance.patch("/transcript/speaker/rename", payload));
+  },
 };
