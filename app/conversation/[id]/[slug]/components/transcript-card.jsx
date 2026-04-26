@@ -104,6 +104,12 @@ const TranscriptCard = () => {
                 silent: true,
             });
 
+            // Auto-expand the transcribed segment so user sees the result immediately
+            setExpandedSegments(prev => ({
+                ...prev,
+                [segmentId]: true,
+            }));
+
         } catch (err) {
             console.error("[TranscriptCard] onTranscribeClick failed:", err);
             setError({ segmentId, message: "Transcription failed. Please try again." });
@@ -148,6 +154,7 @@ const TranscriptCard = () => {
             await getConversationRef.current({  
                 conversationId: conversation?._id,
                 workspaceId,
+                silent: true,
             });
 
         } catch (err) {
