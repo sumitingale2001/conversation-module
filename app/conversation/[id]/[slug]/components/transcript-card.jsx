@@ -6,18 +6,20 @@ import {
   MoreHorizontal,
   FileText,
   Loader2,
-  Check,
-  X,
-  Box,
+  Play,
+  Copy,
 } from "lucide-react";
-import EmojiPicker from "emoji-picker-react";
 import useConversationStore from "../../../../../store/conversation.store";
 import { conversationServices } from "../../../../../services/conversationServices";
 import { workspaceId } from "../../../../../utils/conversation.utils";
 import apiInstance from "../../../../../config/apiInstance";
 import useGetConversation from "../../../../../hooks/use-get-conversation";
 import { useRecordingStore } from "../../../../../store/recording.store";
-import { Button, Popover, Typography } from "@mui/material";
+import {
+  SpeakerLabel,
+  BlockActionsMenu,
+  AddTagPopover,
+} from "./transcript-card-ui-components";
 
 const formatMs = (ms) => {
   if (!ms && ms !== 0) return "00:00";
@@ -40,215 +42,6 @@ const getTimeAgo = (dateString) => {
   return `${Math.floor(h / 24)} days ago`;
 };
 
-const AssignSpeakerPopover = ({
-  speaker,
-  transcriptId,
-  workspaceId,
-  blockId,
-  anchorEl,
-  open,
-  onClose,
-  onSaved,
-}) => {
-  const [name, setName] = useState(speaker?.name || "");
-  const [emoji, setEmoji] = useState(speaker?.avatarEmoji || "🎙️");
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  const pickerRef = useRef(null);
-
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (pickerRef.current && !pickerRef.current.contains(e.target)) {
-        setShowEmojiPicker(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const handleEmojiClick = (emojiData) => {
-    setEmoji(emojiData.emoji);
-    setShowEmojiPicker(false);
-  };
-
-  const hasChanges = speaker
-    ? name.trim() !== speaker?.name || emoji !== speaker?.avatarEmoji
-    : true;
-
-  const canSave = name.trim().length > 0 && hasChanges && !saving;
-
-  const handleSave = async () => {
-    if (!canSave || saving) return;
-
-    setSaving(true);
-    try {
-      if (speaker?._id) {
-        const response = await conversationServices.renameSpeaker({
-          transcriptId,
-          workspaceId,
-          speakerId: speaker._id,
-          name: name.trim(),
-          avatarEmoji: emoji,
-        });
-
-        if (!response?.success) return;
-
-        onSaved({
-          type: "rename",
-          speakerId: speaker._id,
-          blockId,
-          name: name.trim(),
-          emoji,
-        });
-      } else {
-        const response = await conversationServices.createSpeakerAndAssign({
-          transcriptId,
-          workspaceId,
-          blockId,
-          name: name.trim(),
-          avatarEmoji: emoji,
-        });
-
-        if (!response?.success) return;
-
-        const createdSpeaker = response?.data?.speaker;
-        const assignedBlock = response?.data?.block;
-        if (!createdSpeaker?._id || !assignedBlock?._id) return;
-
-        onSaved({
-          type: "createAndAssign",
-          speakerId: createdSpeaker._id,
-          blockId: assignedBlock._id,
-          name: createdSpeaker.name,
-          emoji: createdSpeaker.avatarEmoji || emoji,
-        });
-      }
-      onClose();
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter" && canSave) handleSave();
-    if (e.key === "Escape") onClose();
-  };
-
-  return (
-    <Popover
-      open={open}
-      anchorEl={anchorEl}
-      onClose={onClose}
-      anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
-      transformOrigin={{ vertical: "top", horizontal: "left" }}
-      PaperProps={{
-        className: "rounded-xl p-3 w-[336px]!  border border-gray-100",
-      }}
-    >
-      <div className="rounded-xl p-3 w-[336px]  border border-gray-100">
-        {/* Title */}
-
-        <p className="text-[14px] font-bold leading-[20px] text-gray-700 mb-2">
-          Assign Speaker
-        </p>
-
-        {/* Input Row */}
-        <div className="flex items-center gap-2 mb-3">
-          {/* Emoji */}
-          <div className="relative" ref={pickerRef}>
-            <button
-              onClick={() => setShowEmojiPicker((prev) => !prev)}
-              className="h-9 w-9 flex items-center cursor-pointer justify-center rounded-lg bg-gray-100 hover:bg-gray-200 text-base border border-gray-200"
-            >
-              {emoji}
-            </button>
-
-            {showEmojiPicker && (
-              <div className="absolute top-11 left-0 z-50 shadow-xl rounded-xl overflow-hidden">
-                <EmojiPicker
-                  onEmojiClick={handleEmojiClick}
-                  height={320}
-                  width={280}
-                  previewConfig={{ showPreview: false }}
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Input */}
-          <input
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Speaker name"
-            className="flex-1 h-9 px-2.5 rounded-lg border border-gray-200 text-sm outline-none focus:border-[#221B88] focus:ring-1 focus:ring-blue-500/20 bg-white"
-          />
-        </div>
-
-        {/* Actions */}
-        <div className="flex items-center  gap-2">
-          <button
-            onClick={onClose}
-            type="button"
-            className="px-3 py-1.5 text-sm flex-1 cursor-pointer rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
-          >
-            Cancel
-          </button>
-
-          <button
-            onClick={handleSave}
-            disabled={!canSave}
-            type="submit"
-            className="px-3 py-1.5 text-sm  flex-1 cursor-pointer rounded-lg bg-[#221B88] text-white hover:bg-[#221B88] disabled:bg-gray-400"
-          >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
-          </button>
-        </div>
-      </div>
-    </Popover>
-  );
-};
-
-const SpeakerLabel = ({ speaker, transcriptId, blockId, onSaved }) => {
-  const [anchorEl, setAnchorEl] = useState(null);
-  const open = Boolean(anchorEl);
-
-  const handleClick = (event) => {
-    setAnchorEl(event.currentTarget);
-  };
-
-  const handleClose = () => {
-    setAnchorEl(null);
-  };
-
-  return (
-    <>
-      <button
-        onClick={handleClick}
-        className="flex items-center gap-1 text-xs font-semibold text-foreground hover:text-primary transition-colors"
-      >
-        <span>{speaker?.name || "Speaker 1"}</span>
-        <ChevronDown className="h-3 w-3 text-muted-foreground" />
-      </button>
-
-      {open && (
-        <AssignSpeakerPopover
-          speaker={speaker}
-          transcriptId={transcriptId}
-          workspaceId={workspaceId}
-          blockId={blockId}
-          anchorEl={anchorEl}
-          open={open}
-          onClose={handleClose}
-          onSaved={onSaved}
-        />
-      )}
-    </>
-  );
-};
-
 const TranscriptCard = () => {
   const { conversation, segments, transcript } = useConversationStore();
   const { isRecording, startRecording } = useRecordingStore();
@@ -262,9 +55,22 @@ const TranscriptCard = () => {
   // Local speaker names cache for optimistic updates (stores {name, emoji})
   const [speakerNames, setSpeakerNames] = useState({});
   const [blockSpeakerOverrides, setBlockSpeakerOverrides] = useState({});
+  const [speakerTags, setSpeakerTags] = useState({});
+  const [menuState, setMenuState] = useState({
+    anchorEl: null,
+    speakerKey: null,
+    blockTime: "00:00",
+  });
+  const [tagPopoverState, setTagPopoverState] = useState({
+    anchorEl: null,
+    speakerKey: null,
+    blockTime: "00:00",
+  });
 
   const fileInputRef = useRef(null);
   const getConversationRef = useRef(getConversation);
+  const audioPlayerRef = useRef(null);
+  const stopPlaybackTimerRef = useRef(null);
 
   const isProcessing = conversation?.status === "processing";
 
@@ -299,6 +105,14 @@ const TranscriptCard = () => {
     return map;
   }, [transcript?.speakers, speakerNames]);
 
+  const segmentLookup = useMemo(() => {
+    const map = {};
+    (segments || []).forEach((segment) => {
+      map[segment._id.toString()] = segment;
+    });
+    return map;
+  }, [segments]);
+
   const handleSpeakerSaved = ({ speakerId, blockId, name, emoji }) => {
     if (speakerId) {
       setSpeakerNames((prev) => ({
@@ -314,6 +128,131 @@ const TranscriptCard = () => {
       }));
     }
   };
+
+  const handleOpenMenu = (event, { speakerKey, blockTime }) => {
+    setMenuState({
+      anchorEl: event.currentTarget,
+      speakerKey,
+      blockTime,
+    });
+  };
+
+  const closeMenu = () => {
+    setMenuState({
+      anchorEl: null,
+      speakerKey: null,
+      blockTime: "00:00",
+    });
+  };
+
+  const openAddTagFromMenu = () => {
+    setTagPopoverState({
+      anchorEl: menuState.anchorEl,
+      speakerKey: menuState.speakerKey,
+      blockTime: menuState.blockTime,
+    });
+    closeMenu();
+  };
+
+  const closeTagPopover = () => {
+    setTagPopoverState({
+      anchorEl: null,
+      speakerKey: null,
+      blockTime: "00:00",
+    });
+  };
+
+  const saveTagForSpeaker = (label) => {
+    const normalized = label.trim();
+    if (!normalized || !tagPopoverState.speakerKey) return;
+
+    const type = normalized.toLowerCase() === "ask" ? "ask" : "recheck";
+    const safeLabel = type === "ask" ? "Ask" : "Recheck";
+
+    setSpeakerTags((prev) => {
+      const existing = prev[tagPopoverState.speakerKey] || [];
+      return {
+        ...prev,
+        [tagPopoverState.speakerKey]: [
+          ...existing,
+          {
+            id: `${tagPopoverState.speakerKey}-${Date.now()}-${existing.length}`,
+            label: safeLabel,
+            type,
+          },
+        ],
+      };
+    });
+  };
+
+  const handlePlayBlock = (block) => {
+    const segmentId = block?.segmentId?.toString();
+    if (!segmentId) return;
+
+    const segment = segmentLookup[segmentId];
+    const fileUrl = segment?.fileUrl;
+    if (!fileUrl) return;
+
+    const segmentStartSec = Number(segment?.startTime || 0);
+    const blockStartSec = Number(block?.startTimeMs || 0) / 1000;
+    const blockEndSec = Number(block?.endTimeMs || 0) / 1000;
+    const startFrom = Math.max(0, blockStartSec - segmentStartSec);
+    const stopAt = Math.max(startFrom, blockEndSec - segmentStartSec);
+
+    if (!audioPlayerRef.current) {
+      audioPlayerRef.current = new Audio(fileUrl);
+    }
+
+    const player = audioPlayerRef.current;
+
+    if (player.src !== fileUrl) {
+      player.pause();
+      player.src = fileUrl;
+      player.load();
+    }
+
+    if (stopPlaybackTimerRef.current) {
+      clearTimeout(stopPlaybackTimerRef.current);
+      stopPlaybackTimerRef.current = null;
+    }
+
+    const playFromTime = () => {
+      try {
+        player.currentTime = startFrom;
+      } catch {}
+      player.play().catch(() => {});
+
+      const durationMs = Math.max(0, (stopAt - startFrom) * 1000);
+      if (durationMs > 0) {
+        stopPlaybackTimerRef.current = setTimeout(() => {
+          player.pause();
+        }, durationMs);
+      }
+    };
+
+    if (player.readyState >= 1) {
+      playFromTime();
+      return;
+    }
+
+    const onLoadedMetadata = () => {
+      player.removeEventListener("loadedmetadata", onLoadedMetadata);
+      playFromTime();
+    };
+    player.addEventListener("loadedmetadata", onLoadedMetadata);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (stopPlaybackTimerRef.current) {
+        clearTimeout(stopPlaybackTimerRef.current);
+      }
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.pause();
+        audioPlayerRef.current = null;
+      }
+    };
+  }, []);
 
   const onTranscribeClick = async (segmentId) => {
     if (transcribingSegmentId !== null || isProcessing) return;
@@ -545,6 +484,9 @@ const TranscriptCard = () => {
                       const speaker = effectiveSpeakerId
                         ? speakerLookup[effectiveSpeakerId]
                         : null;
+                      const speakerKey =
+                        effectiveSpeakerId || `unassigned-${block._id.toString()}`;
+                      const tags = speakerTags[speakerKey] || [];
 
                       return (
                         <div
@@ -561,25 +503,65 @@ const TranscriptCard = () => {
                           {/* Speaker avatar + content */}
                           <div className="flex flex-col gap-1.5 flex-1 min-w-0">
                             {/* Speaker row */}
-                            <div className="flex items-center gap-2">
-                              {/* Emoji avatar */}
-                              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-sm">
-                                {speaker?.avatarEmoji || "🎙️"}
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                {/* Emoji avatar */}
+                                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-sm">
+                                  {speaker?.avatarEmoji || "🎙️"}
+                                </div>
+
+                                <SpeakerLabel
+                                  speaker={speaker}
+                                  transcriptId={transcript?._id}
+                                  workspaceId={workspaceId}
+                                  blockId={block._id}
+                                  onSaved={handleSpeakerSaved}
+                                />
+
+                                {tags.map((tagItem) => (
+                                  <span
+                                    key={tagItem.id}
+                                    className={`inline-flex h-6 items-center rounded-full px-2 text-xs ${
+                                      tagItem.type === "ask"
+                                        ? "bg-[#FFF2D8] border border-[#F1B84A] text-[#B87400]"
+                                        : "bg-[#EAF1FF] border border-[#5E8BFF] text-[#2F68FF]"
+                                    }`}
+                                  >
+                                    {tagItem.label}
+                                  </span>
+                                ))}
                               </div>
 
-                              {/* Inline speaker button (triggers modal) */}
-                              {/* {speaker ? ( */}
-                              <SpeakerLabel
-                                speaker={speaker}
-                                transcriptId={transcript?._id}
-                                blockId={block._id}
-                                onSaved={handleSpeakerSaved}
-                              />
-                              {/* ) : (
-                                <span className="text-xs font-semibold text-muted-foreground">
-                                  Unknown Speaker
-                                </span>
-                              )} */}
+                              <div className="flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+                                <button
+                                  type="button"
+                                  onClick={() => handlePlayBlock(block)}
+                                  className="h-7 w-7 rounded-full bg-[#1C1C92] text-white flex items-center justify-center"
+                                >
+                                  <Play size={14} fill="currentColor" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    navigator?.clipboard?.writeText(block.text || "")
+                                  }
+                                  className="h-7 w-7 rounded border border-[#D0D0D0] text-[#6A6A6A] flex items-center justify-center bg-white"
+                                >
+                                  <Copy size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(event) =>
+                                    handleOpenMenu(event, {
+                                      speakerKey,
+                                      blockTime: formatMs(block.startTimeMs),
+                                    })
+                                  }
+                                  className="h-7 w-7 rounded-full text-[#666] flex items-center justify-center hover:bg-[#EFEFEF]"
+                                >
+                                  <MoreHorizontal size={16} />
+                                </button>
+                              </div>
                             </div>
 
                             {/* Block text */}
@@ -660,6 +642,24 @@ const TranscriptCard = () => {
         onChange={handleFileSelect}
         accept="audio/*"
         className="hidden"
+      />
+      <BlockActionsMenu
+        anchorEl={menuState.anchorEl}
+        open={Boolean(menuState.anchorEl)}
+        onClose={closeMenu}
+        onAddTag={openAddTagFromMenu}
+      />
+      <AddTagPopover
+        anchorEl={tagPopoverState.anchorEl}
+        open={Boolean(tagPopoverState.anchorEl)}
+        onClose={closeTagPopover}
+        blockTime={tagPopoverState.blockTime}
+        existingTags={
+          tagPopoverState.speakerKey
+            ? speakerTags[tagPopoverState.speakerKey] || []
+            : []
+        }
+        onSaveTag={saveTagForSpeaker}
       />
     </div>
   );
