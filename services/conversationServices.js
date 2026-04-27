@@ -125,6 +125,11 @@ export const conversationServices = {
     return this.replaceSegment(payload);
   },
 
+  async reorderSegments(payload) {
+    if (!payload.conversationId || !payload.workspaceId || !payload.segmentIds) return null;
+    return await request(apiInstance.post("/conversations/recording/reorder", payload));
+  },
+
   ensureTranscript: async ({ conversationId, workspaceId }) => {
     try {
       const { data } = await apiInstance.get(
@@ -181,5 +186,12 @@ export const conversationServices = {
   async renameSpeaker(payload) {
     if (!payload.transcriptId || !payload.speakerId || !payload.name) return null;
     return await request(apiInstance.patch("/transcript/speaker/rename", payload));
+  },
+
+  async createSpeakerAndAssign(payload) {
+    if (!payload.transcriptId || !payload.workspaceId || !payload.blockId || !payload.name) {
+      return null;
+    }
+    return await request(apiInstance.post("/transcript/create-speaker-and-assign", payload));
   },
 };
