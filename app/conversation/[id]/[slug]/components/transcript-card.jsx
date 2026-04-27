@@ -380,6 +380,23 @@ const TranscriptCard = () => {
             return b.segmentId.toString() === segment._id.toString();
           return index === 0;
         });
+        const sectionSpeakers = Array.from(
+          new Set(
+            segmentBlocks
+              .map((b) => blockSpeakerOverrides[b._id.toString()] || b.speakerId?.toString())
+              .filter(Boolean),
+          ),
+        )
+          .map((speakerId) => {
+            const resolved = speakerLookup[speakerId];
+            if (!resolved) return null;
+            return {
+              _id: resolved._id?.toString() || speakerId,
+              name: resolved.name || "Speaker",
+              avatarEmoji: resolved.avatarEmoji || "🎙️",
+            };
+          })
+          .filter(Boolean);
 
         const hasBlocks = segmentBlocks.length > 0;
         const isSegmentCompleted = hasBlocks;
@@ -512,6 +529,7 @@ const TranscriptCard = () => {
 
                                 <SpeakerLabel
                                   speaker={speaker}
+                                  sectionSpeakers={sectionSpeakers}
                                   transcriptId={transcript?._id}
                                   workspaceId={workspaceId}
                                   blockId={block._id}

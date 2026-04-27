@@ -194,4 +194,11 @@ export const conversationServices = {
     }
     return await request(apiInstance.post("/transcript/create-speaker-and-assign", payload));
   },
+
+  async reassignBlockSpeaker(payload) {
+    if (!payload.transcriptId || !payload.workspaceId || !payload.blockId || !payload.speakerId) {
+      return null;
+    }
+    return await request(apiInstance.patch("/transcript/block/reassign-speaker", payload));
+  },
 };

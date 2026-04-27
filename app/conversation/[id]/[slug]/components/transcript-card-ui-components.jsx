@@ -19,6 +19,7 @@ import { conversationServices } from "../../../../../services/conversationServic
 
 export const AssignSpeakerPopover = ({
   speaker,
+  sectionSpeakers = [],
   transcriptId,
   workspaceId,
   blockId,
@@ -31,18 +32,10 @@ export const AssignSpeakerPopover = ({
   const [emoji, setEmoji] = useState(speaker?.avatarEmoji || "🎙️");
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showSpeakerDropdown, setShowSpeakerDropdown] = useState(false);
 
   const pickerRef = useRef(null);
-
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (pickerRef.current && !pickerRef.current.contains(e.target)) {
-        setShowEmojiPicker(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  const speakerInputRef = useRef(null);
 
   const handleEmojiClick = (emojiData) => {
     setEmoji(emojiData.emoji);
@@ -54,6 +47,36 @@ export const AssignSpeakerPopover = ({
     : true;
 
   const canSave = name.trim().length > 0 && hasChanges && !saving;
+  const normalizedName = name.trim().toLowerCase();
+  const filteredSpeakers = sectionSpeakers.filter((item) =>
+    item?.name?.toLowerCase().includes(normalizedName),
+  );
+
+  const handleSelectExistingSpeaker = async (selectedSpeaker) => {
+    if (!selectedSpeaker?._id || saving) return;
+
+    setSaving(true);
+    try {
+      const response = await conversationServices.reassignBlockSpeaker({
+        transcriptId,
+        workspaceId,
+        blockId,
+        speakerId: selectedSpeaker._id,
+      });
+      if (!response?.success) return;
+
+      onSaved({
+        type: "reassign",
+        speakerId: selectedSpeaker._id,
+        blockId,
+        name: selectedSpeaker.name,
+        emoji: selectedSpeaker.avatarEmoji || "🎙️",
+      });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleSave = async () => {
     if (!canSave || saving) return;
@@ -107,6 +130,39 @@ export const AssignSpeakerPopover = ({
     }
   };
 
+  const handleCreateNewSpeaker = async () => {
+    const trimmedName = name.trim();
+    if (!trimmedName || saving) return;
+
+    setSaving(true);
+    try {
+      const response = await conversationServices.createSpeakerAndAssign({
+        transcriptId,
+        workspaceId,
+        blockId,
+        name: trimmedName,
+        avatarEmoji: emoji,
+      });
+
+      if (!response?.success) return;
+
+      const createdSpeaker = response?.data?.speaker;
+      const assignedBlock = response?.data?.block;
+      if (!createdSpeaker?._id || !assignedBlock?._id) return;
+
+      onSaved({
+        type: "createAndAssign",
+        speakerId: createdSpeaker._id,
+        blockId: assignedBlock._id,
+        name: createdSpeaker.name,
+        emoji: createdSpeaker.avatarEmoji || emoji,
+      });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && canSave) handleSave();
     if (e.key === "Escape") onClose();
@@ -116,7 +172,14 @@ export const AssignSpeakerPopover = ({
     <Popover
       open={open}
       anchorEl={anchorEl}
-      onClose={onClose}
+      onClose={(_, reason) => {
+        if (reason === "backdropClick" || reason === "escapeKeyDown") {
+          onClose();
+        }
+      }}
+      disableAutoFocus
+      disableEnforceFocus
+      disableRestoreFocus
       anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
       transformOrigin={{ vertical: "top", horizontal: "left" }}
       PaperProps={{
@@ -159,13 +222,63 @@ export const AssignSpeakerPopover = ({
 
           <input
             autoFocus
+            ref={speakerInputRef}
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={handleKeyDown}
+            onClick={() => setShowSpeakerDropdown(true)}
             placeholder="Speaker name"
             className="flex-1 h-9 px-2.5 rounded-lg border border-gray-200 text-sm outline-none focus:border-[#221B88] focus:ring-1 focus:ring-blue-500/20 bg-white"
           />
         </div>
+
+        <Popover
+          open={
+            showSpeakerDropdown &&
+            (filteredSpeakers.length > 0 || name.trim().length > 0)
+          }
+          anchorEl={speakerInputRef.current}
+          onClose={(_, reason) => {
+            if (reason === "backdropClick" || reason === "escapeKeyDown") {
+              setShowSpeakerDropdown(false);
+            }
+          }}
+          disableAutoFocus
+          disableEnforceFocus
+          disableRestoreFocus
+          anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+          transformOrigin={{ vertical: "top", horizontal: "left" }}
+          PaperProps={{
+            className:
+              "mt-1 max-h-52 overflow-auto rounded-lg border border-gray-200 bg-white shadow-sm",
+            style: {
+              width: speakerInputRef.current?.offsetWidth || undefined,
+            },
+          }}
+        >
+          <div className="p-1">
+            {name.trim().length > 0 ? (
+              <button
+                type="button"
+                onClick={handleCreateNewSpeaker}
+                className="mb-1 w-full rounded-md bg-[#EEF0FF] px-3 py-2 text-left text-sm font-semibold text-[#2A2A8A] hover:bg-[#E5E8FF]"
+              >
+                Create new speaker &quot;{name.trim()}&quot;
+              </button>
+            ) : null}
+            {filteredSpeakers.map((item) => (
+              <button
+                key={item._id}
+                type="button"
+                onClick={() => handleSelectExistingSpeaker(item)}
+                className="w-full rounded-md flex items-center gap-2 px-3 py-2 text-left hover:bg-gray-50"
+              >
+                <span className="text-base">{item.avatarEmoji || "🎙️"}</span>
+                <span className="text-sm font-medium text-[#5A5A5A]">{item.name}</span>
+              </button>
+            ))}
+          </div>
+        </Popover>
 
         <div className="flex items-center  gap-2">
           <button
@@ -192,6 +305,7 @@ export const AssignSpeakerPopover = ({
 
 export const SpeakerLabel = ({
   speaker,
+  sectionSpeakers,
   transcriptId,
   workspaceId,
   blockId,
@@ -221,6 +335,7 @@ export const SpeakerLabel = ({
       {open && (
         <AssignSpeakerPopover
           speaker={speaker}
+          sectionSpeakers={sectionSpeakers}
           transcriptId={transcriptId}
           workspaceId={workspaceId}
           blockId={blockId}
@@ -242,7 +357,14 @@ export const BlockActionsMenu = ({ anchorEl, open, onClose, onAddTag }) => {
     <Popover
       open={open}
       anchorEl={anchorEl}
-      onClose={onClose}
+      onClose={(_, reason) => {
+        if (reason === "backdropClick" || reason === "escapeKeyDown") {
+          onClose();
+        }
+      }}
+      disableAutoFocus
+      disableEnforceFocus
+      disableRestoreFocus
       anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
       transformOrigin={{ vertical: "top", horizontal: "right" }}
       PaperProps={{
@@ -291,7 +413,14 @@ export const AddTagPopover = ({
     <Popover
       open={open}
       anchorEl={anchorEl}
-      onClose={onClose}
+      onClose={(_, reason) => {
+        if (reason === "backdropClick" || reason === "escapeKeyDown") {
+          onClose();
+        }
+      }}
+      disableAutoFocus
+      disableEnforceFocus
+      disableRestoreFocus
       anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
       transformOrigin={{ vertical: "top", horizontal: "left" }}
       PaperProps={{
@@ -330,7 +459,9 @@ export const AddTagPopover = ({
 
         <div className="my-3 border-t border-[#D9D9D9]" />
 
-        <p className="text-2xl text-[#3A3A3A] leading-none">Quickly add a new tag</p>
+        <p className="text-2xl text-[#3A3A3A] leading-none">
+          Quickly add a new tag
+        </p>
 
         <div className="mt-3 flex items-center gap-2">
           <button
