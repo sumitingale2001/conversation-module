@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import useConversationStore from "../../../../../store/conversation.store";
 import { conversationServices } from "../../../../../services/conversationServices";
-import { workspaceId } from "../../../../../utils/conversation.utils";
+import { workspaceId, userId } from "../../../../../utils/conversation.utils";
 import apiInstance from "../../../../../config/apiInstance";
 import useGetConversation from "../../../../../hooks/use-get-conversation";
 import { useRecordingStore } from "../../../../../store/recording.store";
@@ -55,14 +55,15 @@ const TranscriptCard = () => {
   // Local speaker names cache for optimistic updates (stores {name, emoji})
   const [speakerNames, setSpeakerNames] = useState({});
   const [blockSpeakerOverrides, setBlockSpeakerOverrides] = useState({});
-  const [speakerTags, setSpeakerTags] = useState({});
   const [menuState, setMenuState] = useState({
     anchorEl: null,
+    blockId: null,
     speakerKey: null,
     blockTime: "00:00",
   });
   const [tagPopoverState, setTagPopoverState] = useState({
     anchorEl: null,
+    blockId: null,
     speakerKey: null,
     blockTime: "00:00",
   });
@@ -105,6 +106,18 @@ const TranscriptCard = () => {
     return map;
   }, [transcript?.speakers, speakerNames]);
 
+  const transcriptTagLookup = useMemo(() => {
+    const map = {};
+    (transcript?.tags || []).forEach((tag) => {
+      map[tag._id.toString()] = {
+        id: tag._id.toString(),
+        label: tag.name,
+        type: tag.name?.toLowerCase() === "ask" ? "ask" : "recheck",
+      };
+    });
+    return map;
+  }, [transcript?.tags]);
+
   const segmentLookup = useMemo(() => {
     const map = {};
     (segments || []).forEach((segment) => {
@@ -129,9 +142,10 @@ const TranscriptCard = () => {
     }
   };
 
-  const handleOpenMenu = (event, { speakerKey, blockTime }) => {
+  const handleOpenMenu = (event, { blockId, speakerKey, blockTime }) => {
     setMenuState({
       anchorEl: event.currentTarget,
+      blockId,
       speakerKey,
       blockTime,
     });
@@ -140,6 +154,7 @@ const TranscriptCard = () => {
   const closeMenu = () => {
     setMenuState({
       anchorEl: null,
+      blockId: null,
       speakerKey: null,
       blockTime: "00:00",
     });
@@ -148,6 +163,7 @@ const TranscriptCard = () => {
   const openAddTagFromMenu = () => {
     setTagPopoverState({
       anchorEl: menuState.anchorEl,
+      blockId: menuState.blockId,
       speakerKey: menuState.speakerKey,
       blockTime: menuState.blockTime,
     });
@@ -157,31 +173,44 @@ const TranscriptCard = () => {
   const closeTagPopover = () => {
     setTagPopoverState({
       anchorEl: null,
+      blockId: null,
       speakerKey: null,
       blockTime: "00:00",
     });
   };
 
-  const saveTagForSpeaker = (label) => {
+  const saveTagForSpeaker = async (label) => {
     const normalized = label.trim();
-    if (!normalized || !tagPopoverState.speakerKey) return;
+    if (!normalized || !tagPopoverState.blockId || !transcript?._id) return;
 
-    const type = normalized.toLowerCase() === "ask" ? "ask" : "recheck";
-    const safeLabel = type === "ask" ? "Ask" : "Recheck";
+    const allTagsRes = await conversationServices.getAllTags(userId);
+    const allTags = allTagsRes?.data?.tags || [];
 
-    setSpeakerTags((prev) => {
-      const existing = prev[tagPopoverState.speakerKey] || [];
-      return {
-        ...prev,
-        [tagPopoverState.speakerKey]: [
-          ...existing,
-          {
-            id: `${tagPopoverState.speakerKey}-${Date.now()}-${existing.length}`,
-            label: safeLabel,
-            type,
-          },
-        ],
-      };
+    let selectedTag =
+      allTags.find(
+        (tag) => tag?.name?.trim().toLowerCase() === normalized.toLowerCase(),
+      ) || null;
+
+    if (!selectedTag) {
+      const createRes = await conversationServices.createTag({
+        userId,
+        name: normalized,
+      });
+      selectedTag = createRes?.data?.tag || null;
+    }
+
+    if (!selectedTag?._id) return;
+
+    await conversationServices.addTagToBlock({
+      transcriptId: transcript._id,
+      workspaceId,
+      blockId: tagPopoverState.blockId,
+      tagId: selectedTag._id,
+    });
+
+    await getConversationRef.current({
+      conversationId: conversation?._id,
+      workspaceId,
     });
   };
 
@@ -503,7 +532,9 @@ const TranscriptCard = () => {
                         : null;
                       const speakerKey =
                         effectiveSpeakerId || `unassigned-${block._id.toString()}`;
-                      const tags = speakerTags[speakerKey] || [];
+                      const tags = (block.tagIds || [])
+                        .map((tagId) => transcriptTagLookup[tagId?.toString?.() || tagId])
+                        .filter(Boolean);
 
                       return (
                         <div
@@ -571,6 +602,7 @@ const TranscriptCard = () => {
                                   type="button"
                                   onClick={(event) =>
                                     handleOpenMenu(event, {
+                                      blockId: block._id.toString(),
                                       speakerKey,
                                       blockTime: formatMs(block.startTimeMs),
                                     })
@@ -673,8 +705,14 @@ const TranscriptCard = () => {
         onClose={closeTagPopover}
         blockTime={tagPopoverState.blockTime}
         existingTags={
-          tagPopoverState.speakerKey
-            ? speakerTags[tagPopoverState.speakerKey] || []
+          tagPopoverState.blockId
+            ? (
+                transcript?.blocks?.find(
+                  (b) => b._id.toString() === tagPopoverState.blockId,
+                )?.tagIds || []
+              )
+                .map((tagId) => transcriptTagLookup[tagId?.toString?.() || tagId])
+                .filter(Boolean)
             : []
         }
         onSaveTag={saveTagForSpeaker}

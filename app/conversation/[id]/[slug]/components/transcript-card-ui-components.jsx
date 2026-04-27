@@ -274,7 +274,9 @@ export const AssignSpeakerPopover = ({
                 className="w-full rounded-md flex items-center gap-2 px-3 py-2 text-left hover:bg-gray-50"
               >
                 <span className="text-base">{item.avatarEmoji || "🎙️"}</span>
-                <span className="text-sm font-medium text-[#5A5A5A]">{item.name}</span>
+                <span className="text-sm font-medium text-[#5A5A5A]">
+                  {item.name}
+                </span>
               </button>
             ))}
           </div>
@@ -429,7 +431,7 @@ export const AddTagPopover = ({
     >
       <div className="w-[430px] p-4">
         <div className="flex items-center justify-between">
-          <p className="text-[32px] leading-none font-semibold text-[#2A2A2A]">
+          <p className="leading-none font-semibold text-[#2A2A2A]">
             {blockTime}
           </p>
           <button
@@ -459,9 +461,7 @@ export const AddTagPopover = ({
 
         <div className="my-3 border-t border-[#D9D9D9]" />
 
-        <p className="text-2xl text-[#3A3A3A] leading-none">
-          Quickly add a new tag
-        </p>
+        <p className="text-[#3A3A3A] leading-none">Quickly add a new tag</p>
 
         <div className="mt-3 flex items-center gap-2">
           <button

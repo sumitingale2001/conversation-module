@@ -201,4 +201,25 @@ export const conversationServices = {
     }
     return await request(apiInstance.patch("/transcript/block/reassign-speaker", payload));
   },
+
+  async getAllTags(userId) {
+    if (!userId) return null;
+    return await request(apiInstance.get(`/tags/all?userId=${userId}`));
+  },
+
+  async createTag(payload) {
+    if (!payload?.userId || !payload?.name) return null;
+    return await request(
+      apiInstance.post(`/tags/create-tag?userId=${payload.userId}`, {
+        name: payload.name,
+      }),
+    );
+  },
+
+  async addTagToBlock(payload) {
+    if (!payload?.transcriptId || !payload?.workspaceId || !payload?.blockId || !payload?.tagId) {
+      return null;
+    }
+    return await request(apiInstance.put("/transcript/block/add-tag", payload));
+  },
 };
