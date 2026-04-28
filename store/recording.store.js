@@ -4,10 +4,63 @@ import { create } from 'zustand';
  * Recording Store
  * Manages the MediaRecorder lifecycle, audio chunk accumulation, and recording state.
  */
-export const useRecordingStore = create((set, get) => ({
+export const useRecordingStore = create((set, get) => {
+    const createRecorder = (stream) => {
+        const recorder = new MediaRecorder(stream, {
+            mimeType: 'audio/webm'
+        });
+
+        recorder.ondataavailable = (event) => {
+            if (event.data && event.data.size > 0) {
+                set((state) => ({
+                    audioChunks: [...state.audioChunks, event.data]
+                }));
+            }
+        };
+
+        return recorder;
+    };
+
+    const startTicking = (recorder) => {
+        const timer = setInterval(() => {
+            set((s) => ({ duration: s.duration + 1 }));
+        }, 1000);
+
+        const flushInterval = setInterval(() => {
+            try {
+                if (recorder?.state === 'recording') {
+                    recorder.requestData();
+                }
+            } catch (e) {
+                // Ignore DOMException if recorder is not in a valid state
+            }
+        }, 1000);
+
+        return { timer, flushInterval };
+    };
+
+    const getPreferredAudioStream = async (deviceId) => {
+        if (deviceId) {
+            try {
+                return await navigator.mediaDevices.getUserMedia({
+                    audio: { deviceId: { exact: deviceId } }
+                });
+            } catch (err) {
+                console.warn('[RecordingStore] Requested device unavailable, falling back to default input:', err);
+            }
+        }
+
+        return navigator.mediaDevices.getUserMedia({ audio: true });
+    };
+
+    return ({
     mediaRecorder: null,
     mediaStream: null,
     audioChunks: [],
+    availableDevices: [],
+    selectedDeviceId: null,
+    devicePermissionDenied: false,
+    isSwitchingInput: false,
     isRecording: false,
     isPaused: false,
     duration: 0,
@@ -19,47 +72,19 @@ export const useRecordingStore = create((set, get) => ({
         if (get().isRecording) return;
 
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-            const recorder = new MediaRecorder(stream, {
-                mimeType: 'audio/webm'
-            });
-
-            // FIX 4: Set ondataavailable BEFORE starting the recorder to prevent race conditions
-            // where the first chunk is emitted before the handler is attached.
-            recorder.ondataavailable = (event) => {
-                if (event.data && event.data.size > 0) {
-                    set((state) => {
-                        const updated = [...state.audioChunks, event.data];
-                        return { audioChunks: updated };
-                    });
-                }
-            };
+            const stream = await getPreferredAudioStream(get().selectedDeviceId);
+            const recorder = createRecorder(stream);
 
             // timeslice = 1000ms: Captures data in 1-second intervals to avoid large memory spikes.
-            recorder.start(1000); 
-
-            // ✅ FORCE CHUNK FLUSH
-            // interval = 1000ms: Periodically requests data from the recorder to ensure chunks 
-            // are actively being pushed to the store during long recording sessions.
-            const flushInterval = setInterval(() => {
-                try {
-                    if (recorder.state === "recording") {
-                        recorder.requestData();
-                    }
-                } catch (e) {
-                    // Ignore DOMException if recorder is not in a valid state
-                }
-            }, 1000);
-
-            const timer = setInterval(() => {
-                set((s) => ({ duration: s.duration + 1 }));
-            }, 1000);
+            recorder.start(1000);
+            const { timer, flushInterval } = startTicking(recorder);
 
             set({
                 mediaRecorder: recorder,
                 mediaStream: stream,
                 audioChunks: [], // Clean reset of chunks for the new session
+                selectedDeviceId: stream.getAudioTracks()?.[0]?.getSettings?.().deviceId || get().selectedDeviceId,
+                devicePermissionDenied: false,
                 isRecording: true,
                 isPaused: false,
                 duration: 0,
@@ -115,19 +140,7 @@ export const useRecordingStore = create((set, get) => ({
 
         mediaRecorder.resume();
 
-        const timer = setInterval(() => {
-            set((s) => ({ duration: s.duration + 1 }));
-        }, 1000);
-
-        const newFlushInterval = setInterval(() => {
-            try {
-                if (mediaRecorder?.state === "recording") {
-                    mediaRecorder.requestData();
-                }
-            } catch (err) {
-                // Ignore
-            }
-        }, 1000);
+        const { timer, flushInterval: newFlushInterval } = startTicking(mediaRecorder);
 
         set({ 
             isPaused: false, 
@@ -225,5 +238,128 @@ export const useRecordingStore = create((set, get) => ({
             intervalId: null,
             flushInterval: null
         });
+    },
+
+    loadDevices: async () => {
+        if (typeof navigator === 'undefined' || !navigator?.mediaDevices?.enumerateDevices) return;
+
+        const currentStream = get().mediaStream;
+        let permissionStream = null;
+
+        try {
+            if (!currentStream) {
+                permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            }
+
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const audioInputs = devices.filter((d) => d.kind === 'audioinput');
+            const existingSelection = get().selectedDeviceId;
+            const hasExisting = audioInputs.some((d) => d.deviceId === existingSelection);
+            const selectedDeviceId = hasExisting
+                ? existingSelection
+                : audioInputs[0]?.deviceId || null;
+
+            set({
+                availableDevices: audioInputs,
+                selectedDeviceId,
+                devicePermissionDenied: false
+            });
+        } catch (err) {
+            console.error('[RecordingStore] loadDevices failed:', err);
+            set({
+                availableDevices: [],
+                selectedDeviceId: null,
+                devicePermissionDenied: true
+            });
+        } finally {
+            permissionStream?.getTracks().forEach((track) => track.stop());
+        }
+    },
+
+    setDevice: (deviceId) => {
+        set({ selectedDeviceId: deviceId || null });
+    },
+
+    restartRecordingWithDevice: async (deviceId) => {
+        const {
+            isRecording,
+            mediaRecorder,
+            mediaStream,
+            isPaused,
+            intervalId,
+            flushInterval
+        } = get();
+
+        if (!isRecording || !mediaRecorder) {
+            set({ selectedDeviceId: deviceId || null });
+            return;
+        }
+
+        set({ isSwitchingInput: true, selectedDeviceId: deviceId || null });
+
+        if (intervalId) clearInterval(intervalId);
+        if (flushInterval) clearInterval(flushInterval);
+
+        try {
+            if (mediaRecorder.state === 'recording' || mediaRecorder.state === 'paused') {
+                try {
+                    mediaRecorder.requestData();
+                    await new Promise((r) => setTimeout(r, 120));
+                } catch (e) {
+                    console.warn('[RecordingStore] Failed flushing before input switch:', e);
+                }
+            }
+
+            await new Promise((resolve) => {
+                mediaRecorder.onstop = () => resolve();
+                if (mediaRecorder.state !== 'inactive') {
+                    mediaRecorder.stop();
+                } else {
+                    resolve();
+                }
+            });
+
+            mediaStream?.getTracks().forEach((track) => track.stop());
+
+            const newStream = await getPreferredAudioStream(deviceId);
+            const newRecorder = createRecorder(newStream);
+            newRecorder.start(1000);
+
+            let nextTimer = null;
+            let nextFlushInterval = null;
+
+            if (isPaused) {
+                newRecorder.pause();
+            } else {
+                const ticking = startTicking(newRecorder);
+                nextTimer = ticking.timer;
+                nextFlushInterval = ticking.flushInterval;
+            }
+
+            set({
+                mediaRecorder: newRecorder,
+                mediaStream: newStream,
+                isRecording: true,
+                isPaused,
+                intervalId: nextTimer,
+                flushInterval: nextFlushInterval,
+                selectedDeviceId: newStream.getAudioTracks()?.[0]?.getSettings?.().deviceId || deviceId || null,
+                devicePermissionDenied: false
+            });
+        } catch (err) {
+            console.error('[RecordingStore] restartRecordingWithDevice failed:', err);
+            set({
+                mediaRecorder: null,
+                mediaStream: null,
+                isRecording: false,
+                isPaused: false,
+                intervalId: null,
+                flushInterval: null,
+                selectedDeviceId: null
+            });
+        } finally {
+            set({ isSwitchingInput: false });
+        }
     }
-}));
+});
+});

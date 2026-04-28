@@ -412,7 +412,11 @@ const TranscriptCard = () => {
         const sectionSpeakers = Array.from(
           new Set(
             segmentBlocks
-              .map((b) => blockSpeakerOverrides[b._id.toString()] || b.speakerId?.toString())
+              .map(
+                (b) =>
+                  blockSpeakerOverrides[b._id.toString()] ||
+                  b.speakerId?.toString(),
+              )
               .filter(Boolean),
           ),
         )
@@ -531,9 +535,13 @@ const TranscriptCard = () => {
                         ? speakerLookup[effectiveSpeakerId]
                         : null;
                       const speakerKey =
-                        effectiveSpeakerId || `unassigned-${block._id.toString()}`;
+                        effectiveSpeakerId ||
+                        `unassigned-${block._id.toString()}`;
                       const tags = (block.tagIds || [])
-                        .map((tagId) => transcriptTagLookup[tagId?.toString?.() || tagId])
+                        .map(
+                          (tagId) =>
+                            transcriptTagLookup[tagId?.toString?.() || tagId],
+                        )
                         .filter(Boolean);
 
                       return (
@@ -555,7 +563,7 @@ const TranscriptCard = () => {
                               <div className="flex items-center gap-2 min-w-0">
                                 {/* Emoji avatar */}
                                 <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-sm">
-                                  {speaker?.avatarEmoji || "🎙️"}
+                                  {speaker?.avatarEmoji || "😀"}
                                 </div>
 
                                 <SpeakerLabel
@@ -585,16 +593,18 @@ const TranscriptCard = () => {
                                 <button
                                   type="button"
                                   onClick={() => handlePlayBlock(block)}
-                                  className="h-7 w-7 rounded-full bg-[#1C1C92] text-white flex items-center justify-center"
+                                  className="h-7 w-7 rounded-full bg-[#1C1C92] text-white flex items-center justify-center cursor-pointer"
                                 >
                                   <Play size={14} fill="currentColor" />
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    navigator?.clipboard?.writeText(block.text || "")
+                                    navigator?.clipboard?.writeText(
+                                      block.text || "",
+                                    )
                                   }
-                                  className="h-7 w-7 rounded border border-[#D0D0D0] text-[#6A6A6A] flex items-center justify-center bg-white"
+                                  className="h-7 w-7 cursor-pointer rounded border border-[#D0D0D0] text-[#6A6A6A] flex items-center justify-center bg-white"
                                 >
                                   <Copy size={14} />
                                 </button>
@@ -607,7 +617,7 @@ const TranscriptCard = () => {
                                       blockTime: formatMs(block.startTimeMs),
                                     })
                                   }
-                                  className="h-7 w-7 rounded-full text-[#666] flex items-center justify-center hover:bg-[#EFEFEF]"
+                                  className="h-7 w-7 cursor-pointer rounded-full text-[#666] flex items-center justify-center hover:bg-[#EFEFEF]"
                                 >
                                   <MoreHorizontal size={16} />
                                 </button>
@@ -711,7 +721,9 @@ const TranscriptCard = () => {
                   (b) => b._id.toString() === tagPopoverState.blockId,
                 )?.tagIds || []
               )
-                .map((tagId) => transcriptTagLookup[tagId?.toString?.() || tagId])
+                .map(
+                  (tagId) => transcriptTagLookup[tagId?.toString?.() || tagId],
+                )
                 .filter(Boolean)
             : []
         }

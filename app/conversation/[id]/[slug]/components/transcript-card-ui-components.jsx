@@ -353,7 +353,7 @@ export const SpeakerLabel = ({
 
 export const BlockActionsMenu = ({ anchorEl, open, onClose, onAddTag }) => {
   const itemClass =
-    "w-full flex items-center gap-2 px-3 py-2 text-sm text-[#3A3A3A] hover:bg-gray-50";
+    "w-full flex items-center gap-2 px-3 py-2 text-sm text-[#3A3A3A] hover:bg-gray-50 cursor-pointer";
 
   return (
     <Popover
