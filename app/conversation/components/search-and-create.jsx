@@ -4,6 +4,9 @@ import { Menu, MenuItem } from "@mui/material"
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState, useRef } from "react";
+import { conversationServices } from "../../../services/conversationServices";
+import apiInstance from "../../../config/apiInstance";
+import { userId, workspaceId } from "../../../utils/conversation.utils";
 
 const menuItemSx = {
     fontWeight: 400, fontSize: "12px", lineHeight: "16px", padding: "1rem", gap: 1, height: "22px", borderRadius: "8px", hover: {
@@ -14,6 +17,7 @@ const menuItemSx = {
 
 const Add = () => {
     const [anchorEl, setAnchorEl] = useState(null);
+    const [isUploadingSource, setIsUploadingSource] = useState(false);
     const open = Boolean(anchorEl);
     const fileInputRef = useRef(null);
     const router = useRouter()
@@ -28,6 +32,7 @@ const Add = () => {
     };
 
     const handleAddSourceClick = () => {
+        if (isUploadingSource) return;
         handleClose();
         if (fileInputRef.current) {
             fileInputRef.current.click();
@@ -50,6 +55,69 @@ const Add = () => {
             handleClose();
         }
     }
+
+    const handleSourceFileUpload = async (file) => {
+        if (isUploadingSource) return;
+        setIsUploadingSource(true);
+
+        try {
+            const createRes = await conversationServices.createConversation({
+                userId,
+                workspaceId,
+                sourceType: "upload",
+            });
+            if (!createRes?.success || !createRes?.data?._id) {
+                throw new Error(createRes?.error || "Failed to create conversation.");
+            }
+
+            const conversationId = createRes.data._id;
+
+            const formData = new FormData();
+            formData.append("file", file);
+            formData.append("conversationId", conversationId);
+            formData.append("workspaceId", workspaceId);
+
+            const uploadRes = await apiInstance.post("/uploads/audio", formData, {
+                headers: { "Content-Type": "multipart/form-data" },
+            });
+
+            if (!uploadRes?.data?.success || !uploadRes?.data?.fileUrl) {
+                throw new Error("Upload failed.");
+            }
+
+            const appendRes = await conversationServices.appendSegment({
+                conversationId,
+                workspaceId,
+                fileUrl: uploadRes.data.fileUrl,
+                duration: 0,
+                startTime: 0,
+                endTime: 0,
+            });
+
+            if (!appendRes?.success) {
+                throw new Error(appendRes?.error || "Failed to append segment.");
+            }
+
+            router.push(`/conversation/${conversationId}/upload`);
+        } catch (error) {
+            console.error("[SearchAndCreate] Upload source flow failed:", error);
+        } finally {
+            setIsUploadingSource(false);
+        }
+    };
+
+    const handleFileSelect = async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        if (!file.type.startsWith("audio/")) {
+            event.target.value = "";
+            return;
+        }
+
+        await handleSourceFileUpload(file);
+        event.target.value = "";
+    };
 
     return (
         <>
@@ -81,19 +149,20 @@ const Add = () => {
                 transformOrigin={{ horizontal: "right", vertical: "top" }}
                 anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
             >
-                <MenuItem disabled={loading} sx={menuItemSx} onClick={handleInstantRecord}>
+                <MenuItem disabled={loading || isUploadingSource} sx={menuItemSx} onClick={handleInstantRecord}>
                     <Image loading="eager" src="/mic.svg" alt="mic" width={16} height={16} />
                     Instant record
                 </MenuItem>
-                <MenuItem sx={menuItemSx} onClick={handleAddSourceClick}>
+                <MenuItem disabled={loading || isUploadingSource} sx={menuItemSx} onClick={handleAddSourceClick}>
                     <Image loading="eager" src="/interaction-file.svg" alt="mic" width={16} height={16} />
-                    Add Source & transcribe
+                    {isUploadingSource ? "Uploading..." : "Add Source & transcribe"}
                 </MenuItem>
             </Menu>
             <input
                 type="file"
                 accept="audio/*"
                 ref={fileInputRef}
+                onChange={handleFileSelect}
                 style={{ display: "none" }}
             />
         </>
