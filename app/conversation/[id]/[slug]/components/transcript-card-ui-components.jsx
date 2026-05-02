@@ -12,6 +12,9 @@ import {
   EyeOff,
   Trash2,
   PenLine,
+  ArrowUp,
+  ArrowDown,
+  AudioLines,
 } from "lucide-react";
 import EmojiPicker from "emoji-picker-react";
 import { Popover, Menu, MenuItem } from "@mui/material";
@@ -463,6 +466,81 @@ export const BlockActionsMenu = ({
             </button>
           </>
         )}
+      </div>
+    </Popover>
+  );
+};
+
+export const SegmentMainActionsMenu = ({
+  anchorEl,
+  open,
+  onClose,
+  isFirst,
+  isLast,
+  moveDisabled,
+  onMoveUp,
+  onMoveDown,
+  onAppendRecording,
+  onDelete,
+}) => {
+  const itemClass =
+    "w-full flex items-center gap-2 px-3 py-2 text-sm text-[#3A3A3A] hover:bg-gray-50 cursor-pointer text-left";
+
+  return (
+    <Popover
+      open={open}
+      anchorEl={anchorEl}
+      onClose={(_, reason) => {
+        if (reason === "backdropClick" || reason === "escapeKeyDown") {
+          onClose();
+        }
+      }}
+      disableAutoFocus
+      disableEnforceFocus
+      disableRestoreFocus
+      anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+      transformOrigin={{ vertical: "top", horizontal: "right" }}
+      PaperProps={{
+        className: "rounded-[12px] border border-[#E5E5E5] shadow-sm mt-1",
+      }}
+    >
+      <div className="min-w-[180px] py-1">
+        <button
+          type="button"
+          disabled={isFirst || moveDisabled}
+          className={`${itemClass} disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none`}
+          onClick={() => onMoveUp?.()}
+        >
+          <ArrowUp size={16} />
+          <span>Move up</span>
+        </button>
+        <button
+          type="button"
+          disabled={isLast || moveDisabled}
+          className={`${itemClass} disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none`}
+          onClick={() => onMoveDown?.()}
+        >
+          <ArrowDown size={16} />
+          <span>Move down</span>
+        </button>
+        <button
+          type="button"
+          disabled={moveDisabled}
+          className={`${itemClass} disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none`}
+          onClick={() => onAppendRecording?.()}
+        >
+          <AudioLines size={16} />
+          <span>Append recording</span>
+        </button>
+        <button
+          type="button"
+          disabled={moveDisabled}
+          className={`${itemClass} disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none`}
+          onClick={() => onDelete?.()}
+        >
+          <Trash2 size={16} />
+          <span>Delete</span>
+        </button>
       </div>
     </Popover>
   );

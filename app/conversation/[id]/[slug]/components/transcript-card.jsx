@@ -21,6 +21,7 @@ import {
   AddTagPopover,
   TranscriptBlockTextEditor,
   SpeakerLabel,
+  SegmentMainActionsMenu,
 } from "./transcript-card-ui-components";
 import Image from "next/image";
 
@@ -128,6 +129,11 @@ const TranscriptCard = () => {
   const [togglingBlockActive, setTogglingBlockActive] = useState(false);
   const [restoringBlock, setRestoringBlock] = useState(false);
   const [copiedBlockId, setCopiedBlockId] = useState(null);
+  const [segmentMenu, setSegmentMenu] = useState({
+    anchorEl: null,
+    segmentId: null,
+  });
+  const [segmentMenuBusy, setSegmentMenuBusy] = useState(false);
 
   const fileInputRef = useRef(null);
   const getConversationRef = useRef(getConversation);
@@ -629,6 +635,68 @@ const TranscriptCard = () => {
     e.target.value = "";
   };
 
+  const closeSegmentMenu = () =>
+    setSegmentMenu({ anchorEl: null, segmentId: null });
+
+  const refetchConversation = async () => {
+    if (!conversation?._id) return;
+    await getConversationRef.current({
+      conversationId: conversation._id,
+      workspaceId,
+      silent: true,
+    });
+  };
+
+  const segmentMenuMoveDisabled =
+    segmentMenuBusy ||
+    isProcessing ||
+    isRecording ||
+    isUploading ||
+    transcribingSegmentId !== null;
+
+  const handleSegmentMove = async (direction) => {
+    const segmentId = segmentMenu.segmentId;
+    closeSegmentMenu();
+    if (!segmentId || !conversation?._id || segmentMenuMoveDisabled) return;
+    setSegmentMenuBusy(true);
+    try {
+      const res = await conversationServices.moveConversation({
+        conversationId: conversation._id,
+        workspaceId,
+        segmentId,
+        direction,
+      });
+      if (!res?.success) return;
+      await refetchConversation();
+    } finally {
+      setSegmentMenuBusy(false);
+    }
+  };
+
+  const handleSegmentDelete = async () => {
+    const segmentId = segmentMenu.segmentId;
+    closeSegmentMenu();
+    if (!segmentId || !conversation?._id || segmentMenuMoveDisabled) return;
+    setSegmentMenuBusy(true);
+    try {
+      const res = await conversationServices.deleteSegment({
+        segmentId,
+        workspaceId,
+        conversationId: conversation._id,
+      });
+      if (!res?.success) return;
+      await refetchConversation();
+    } finally {
+      setSegmentMenuBusy(false);
+    }
+  };
+
+  const handleSegmentAppendRecording = () => {
+    closeSegmentMenu();
+    if (segmentMenuMoveDisabled) return;
+    if (!isRecording) startRecording();
+  };
+
   const menuTargetBlock =
     menuState.blockId && transcript?.blocks
       ? transcript.blocks.find((b) => b._id.toString() === menuState.blockId)
@@ -638,6 +706,16 @@ const TranscriptCard = () => {
   const showRestoreInMenu = menuTargetBlock?.isEdited === true;
 
   if (!segments || segments.length === 0) return null;
+
+  const segmentMenuIdx =
+    segmentMenu.segmentId != null
+      ? segments.findIndex(
+          (s) => s._id.toString() === String(segmentMenu.segmentId),
+        )
+      : -1;
+  const segmentMenuIsFirst = segmentMenuIdx === 0;
+  const segmentMenuIsLast =
+    segmentMenuIdx >= 0 && segmentMenuIdx === segments.length - 1;
 
   const isActionsDisabled =
     isRecording ||
@@ -654,9 +732,8 @@ const TranscriptCard = () => {
 
         const segmentBlocks = (transcript?.blocks || []).filter((b) => {
           if (b.isDeleted) return false;
-          if (b.segmentId)
-            return b.segmentId.toString() === segment._id.toString();
-          return index === 0;
+          if (b.segmentId == null || b.segmentId === "") return false;
+          return b.segmentId.toString() === segment._id.toString();
         });
         const hasBlocks = segmentBlocks.length > 0;
         const sectionSpeakers = Array.from(
@@ -736,7 +813,15 @@ const TranscriptCard = () => {
                 )}
                 <button
                   type="button"
-                  className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                  className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:pointer-events-none"
+                  disabled={segmentMenuMoveDisabled}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSegmentMenu({
+                      anchorEl: e.currentTarget,
+                      segmentId: segment._id,
+                    });
+                  }}
                 >
                   <Image
                     src="/three-dots.svg"
@@ -1029,6 +1114,18 @@ const TranscriptCard = () => {
         onChange={handleFileSelect}
         accept="audio/*"
         className="hidden"
+      />
+      <SegmentMainActionsMenu
+        anchorEl={segmentMenu.anchorEl}
+        open={Boolean(segmentMenu.anchorEl)}
+        onClose={closeSegmentMenu}
+        isFirst={segmentMenuIsFirst}
+        isLast={segmentMenuIsLast}
+        moveDisabled={segmentMenuMoveDisabled}
+        onMoveUp={() => handleSegmentMove("up")}
+        onMoveDown={() => handleSegmentMove("down")}
+        onAppendRecording={handleSegmentAppendRecording}
+        onDelete={handleSegmentDelete}
       />
       <BlockActionsMenu
         anchorEl={menuState.anchorEl}

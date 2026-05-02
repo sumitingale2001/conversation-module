@@ -143,6 +143,35 @@ export const conversationServices = {
     );
   },
 
+  async moveConversation(payload) {
+    const { conversationId, workspaceId, segmentId, direction } = payload || {};
+    if (!conversationId || !workspaceId || !segmentId || !direction) return null;
+    return await request(
+      apiInstance.patch("/conversations/move", {
+        conversationId,
+        workspaceId,
+        segmentId,
+        direction,
+      }),
+    );
+  },
+
+  async deleteConversation(id, data) {
+    if (!id) return null;
+    return await request(
+      apiInstance.delete(`/conversations/${id}`, { data: data || {} }),
+    );
+  },
+
+  async deleteSegment({ segmentId, workspaceId, conversationId }) {
+    if (!segmentId || !workspaceId || !conversationId) return null;
+    return await request(
+      apiInstance.delete(`/conversations/segment/${segmentId}`, {
+        data: { workspaceId, conversationId },
+      }),
+    );
+  },
+
   ensureTranscript: async ({ conversationId, workspaceId }) => {
     try {
       const { data } = await apiInstance.get(
