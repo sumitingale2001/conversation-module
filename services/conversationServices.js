@@ -4,7 +4,8 @@ import apiInstance from "../config/apiInstance";
  * ROUNDING HELPER
  * Ensures all duration/time values are kept to 3 decimal places as per contract.
  */
-export const roundVal = (val) => (typeof val === "number" ? parseFloat(val.toFixed(3)) : val);
+export const roundVal = (val) =>
+  typeof val === "number" ? parseFloat(val.toFixed(3)) : val;
 
 /**
  * RESPONSE NORMALIZER
@@ -22,7 +23,8 @@ const request = async (apiCall) => {
     };
   } catch (error) {
     const code = error?.response?.status || 500;
-    const message = error?.response?.data?.error || error?.message || "Unknown Error";
+    const message =
+      error?.response?.data?.error || error?.message || "Unknown Error";
 
     const errorPayload = {
       success: false,
@@ -49,7 +51,9 @@ export const conversationServices = {
   async getConversation(conversationId, workspaceId) {
     if (!conversationId || !workspaceId) return null;
     return await request(
-      apiInstance.get(`/conversations?conversationId=${conversationId}&workspaceId=${workspaceId}`)
+      apiInstance.get(
+        `/conversations?conversationId=${conversationId}&workspaceId=${workspaceId}`,
+      ),
     );
   },
 
@@ -59,7 +63,8 @@ export const conversationServices = {
   },
 
   async updateTitle(payload) {
-    if (!payload.conversationId || !payload.workspaceId || !payload.title) return null;
+    if (!payload.conversationId || !payload.workspaceId || !payload.title)
+      return null;
     return await request(apiInstance.patch("/conversations/title", payload));
   },
 
@@ -69,7 +74,8 @@ export const conversationServices = {
   },
 
   async updateEmoji(payload) {
-    if (!payload.conversationId || !payload.workspaceId || !payload.emoji) return null;
+    if (!payload.conversationId || !payload.workspaceId || !payload.emoji)
+      return null;
     return await request(apiInstance.patch("/conversations/emoji", payload));
   },
 
@@ -99,7 +105,9 @@ export const conversationServices = {
       endTime: roundVal(payload.endTime),
     };
 
-    return await request(apiInstance.post("/conversations/recording/append", sanitized));
+    return await request(
+      apiInstance.post("/conversations/recording/append", sanitized),
+    );
   },
 
   // Alias for appendSegment used in hooks
@@ -117,7 +125,9 @@ export const conversationServices = {
       endTime: roundVal(payload.endTime),
     };
 
-    return await request(apiInstance.post("/conversations/recording/replace", sanitized));
+    return await request(
+      apiInstance.post("/conversations/recording/replace", sanitized),
+    );
   },
 
   // Alias for replaceSegment used in hooks
@@ -126,19 +136,25 @@ export const conversationServices = {
   },
 
   async reorderSegments(payload) {
-    if (!payload.conversationId || !payload.workspaceId || !payload.segmentIds) return null;
-    return await request(apiInstance.post("/conversations/recording/reorder", payload));
+    if (!payload.conversationId || !payload.workspaceId || !payload.segmentIds)
+      return null;
+    return await request(
+      apiInstance.post("/conversations/recording/reorder", payload),
+    );
   },
 
   ensureTranscript: async ({ conversationId, workspaceId }) => {
     try {
       const { data } = await apiInstance.get(
-        `/transcript?conversationId=${conversationId}&workspaceId=${workspaceId}`
+        `/transcript?conversationId=${conversationId}&workspaceId=${workspaceId}`,
       );
       return data;
     } catch (err) {
       console.error("[conversationServices] ensureTranscript failed:", err);
-      return { success: false, error: err?.response?.data?.error || err.message };
+      return {
+        success: false,
+        error: err?.response?.data?.error || err.message,
+      };
     }
   },
 
@@ -151,13 +167,21 @@ export const conversationServices = {
       return data;
     } catch (err) {
       console.error("[conversationServices] triggerTranscription failed:", err);
-      return { success: false, error: err?.response?.data?.error || err.message };
+      return {
+        success: false,
+        error: err?.response?.data?.error || err.message,
+      };
     }
   },
 
   // --- TAG APIs ---
   async attachTag(payload) {
-    if (!payload.conversationId || !payload.tagId || payload.timestamp === undefined) return null;
+    if (
+      !payload.conversationId ||
+      !payload.tagId ||
+      payload.timestamp === undefined
+    )
+      return null;
 
     const sanitized = {
       ...payload,
@@ -180,31 +204,87 @@ export const conversationServices = {
 
   async deleteTag(tagInstanceId) {
     if (!tagInstanceId) return null;
-    return await request(apiInstance.delete(`/timeline/tags/delete?tagInstanceId=${tagInstanceId}`));
+    return await request(
+      apiInstance.delete(
+        `/timeline/tags/delete?tagInstanceId=${tagInstanceId}`,
+      ),
+    );
   },
 
   async renameSpeaker(payload) {
-    if (!payload.transcriptId || !payload.speakerId || !payload.name) return null;
-    return await request(apiInstance.patch("/transcript/speaker/rename", payload));
+    if (!payload.transcriptId || !payload.speakerId || !payload.name)
+      return null;
+    return await request(
+      apiInstance.patch("/transcript/speaker/rename", payload),
+    );
   },
 
   async createSpeakerAndAssign(payload) {
-    if (!payload.transcriptId || !payload.workspaceId || !payload.blockId || !payload.name) {
+    if (
+      !payload.transcriptId ||
+      !payload.workspaceId ||
+      !payload.blockId ||
+      !payload.name
+    ) {
       return null;
     }
-    return await request(apiInstance.post("/transcript/create-speaker-and-assign", payload));
+    return await request(
+      apiInstance.post("/transcript/create-speaker-and-assign", payload),
+    );
   },
 
   async reassignBlockSpeaker(payload) {
-    if (!payload.transcriptId || !payload.workspaceId || !payload.blockId || !payload.speakerId) {
+    if (
+      !payload.transcriptId ||
+      !payload.workspaceId ||
+      !payload.blockId ||
+      !payload.speakerId
+    ) {
       return null;
     }
-    return await request(apiInstance.patch("/transcript/block/reassign-speaker", payload));
+    return await request(
+      apiInstance.patch("/transcript/block/reassign-speaker", payload),
+    );
   },
 
   async updateTranscriptBlock(payload) {
-    if (!payload?.transcriptId || !payload?.workspaceId || !payload?.blockId) return null;
-    return await request(apiInstance.patch("/transcript/block/update", payload));
+    if (!payload?.transcriptId || !payload?.workspaceId || !payload?.blockId)
+      return null;
+    return await request(
+      apiInstance.patch("/transcript/block/update", payload),
+    );
+  },
+
+  async addTranscriptBlock(payload) {
+    if (
+      !payload?.transcriptId ||
+      !payload?.workspaceId ||
+      !payload?.afterBlockId
+    )
+      return null;
+    return await request(apiInstance.post("/transcript/block/add", payload));
+  },
+
+  async deleteTranscriptBlock(payload) {
+    if (!payload?.transcriptId || !payload?.workspaceId || !payload?.blockId)
+      return null;
+    return await request(
+      apiInstance.delete("/transcript/block/delete", { data: payload }),
+    );
+  },
+
+  async toggleTranscriptBlockActive(payload) {
+    if (
+      !payload?.transcriptId ||
+      !payload?.workspaceId ||
+      !payload?.blockId ||
+      typeof payload?.isActive !== "boolean"
+    ) {
+      return null;
+    }
+    return await request(
+      apiInstance.patch("/transcript/block/toggle-active", payload),
+    );
   },
 
   async getAllTags(userId) {
@@ -222,7 +302,12 @@ export const conversationServices = {
   },
 
   async addTagToBlock(payload) {
-    if (!payload?.transcriptId || !payload?.workspaceId || !payload?.blockId || !payload?.tagId) {
+    if (
+      !payload?.transcriptId ||
+      !payload?.workspaceId ||
+      !payload?.blockId ||
+      !payload?.tagId
+    ) {
       return null;
     }
     return await request(apiInstance.put("/transcript/block/add-tag", payload));

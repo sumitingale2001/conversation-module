@@ -8,6 +8,7 @@ import {
   Plus,
   Tag,
   RotateCcw,
+  Eye,
   EyeOff,
   Trash2,
   PenLine,
@@ -312,11 +313,13 @@ export const SpeakerLabel = ({
   workspaceId,
   blockId,
   onSaved,
+  disabled = false,
 }) => {
   const [anchorEl, setAnchorEl] = useState(null);
   const open = Boolean(anchorEl);
 
   const handleClick = (event) => {
+    if (disabled) return;
     setAnchorEl(event.currentTarget);
   };
 
@@ -324,13 +327,17 @@ export const SpeakerLabel = ({
     setAnchorEl(null);
   };
 
+  const labelText = speaker?.name || (speaker ? "Speaker 1" : "Add Speaker");
+
   return (
     <>
       <button
+        type="button"
+        disabled={disabled}
         onClick={handleClick}
-        className="flex items-center gap-1 text-xs font-semibold text-foreground hover:text-primary transition-colors"
+        className="flex items-center gap-1 text-xs font-semibold text-foreground hover:text-primary transition-colors disabled:opacity-60 disabled:pointer-events-none disabled:cursor-not-allowed"
       >
-        <span>{speaker?.name || "Speaker 1"}</span>
+        <span>{labelText}</span>
         <ChevronDown className="h-3 w-3 text-muted-foreground" />
       </button>
 
@@ -351,7 +358,21 @@ export const SpeakerLabel = ({
   );
 };
 
-export const BlockActionsMenu = ({ anchorEl, open, onClose, onAddTag }) => {
+export const BlockActionsMenu = ({
+  anchorEl,
+  open,
+  onClose,
+  onAddTag,
+  onAddBlock,
+  addBlockDisabled,
+  addTagDisabled,
+  onDeleteBlock,
+  deleteBlockDisabled,
+  onToggleBlockActive,
+  toggleBlockActiveDisabled,
+  targetBlockIsActive = true,
+  manualBlockMenuOnly = false,
+}) => {
   const itemClass =
     "w-full flex items-center gap-2 px-3 py-2 text-sm text-[#3A3A3A] hover:bg-gray-50 cursor-pointer";
 
@@ -374,26 +395,64 @@ export const BlockActionsMenu = ({ anchorEl, open, onClose, onAddTag }) => {
       }}
     >
       <div className="w-[148px] py-1">
-        <button type="button" className={itemClass}>
-          <Plus size={16} />
-          <span>Add block</span>
-        </button>
-        <button type="button" className={itemClass} onClick={onAddTag}>
-          <Tag size={16} />
-          <span>Add tags</span>
-        </button>
-        <button type="button" className={itemClass}>
-          <RotateCcw size={16} />
-          <span>Restore</span>
-        </button>
-        <button type="button" className={itemClass}>
-          <EyeOff size={16} />
-          <span>Disable</span>
-        </button>
-        <button type="button" className={itemClass}>
-          <Trash2 size={16} />
-          <span>Delete</span>
-        </button>
+        {manualBlockMenuOnly ? (
+          <button
+            type="button"
+            disabled={deleteBlockDisabled}
+            className={`${itemClass} disabled:opacity-40 disabled:cursor-not-allowed`}
+            onClick={() => onDeleteBlock?.()}
+          >
+            <Trash2 size={16} />
+            <span>Delete</span>
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              disabled={addBlockDisabled}
+              className={`${itemClass} disabled:opacity-40 disabled:cursor-not-allowed`}
+              onClick={() => onAddBlock?.()}
+            >
+              <Plus size={16} />
+              <span>Add block</span>
+            </button>
+            <button
+              type="button"
+              disabled={addTagDisabled}
+              className={`${itemClass} disabled:opacity-40 disabled:cursor-not-allowed`}
+              onClick={() => onAddTag?.()}
+            >
+              <Tag size={16} />
+              <span>Add tags</span>
+            </button>
+            <button type="button" className={itemClass}>
+              <RotateCcw size={16} />
+              <span>Restore</span>
+            </button>
+            <button
+              type="button"
+              disabled={toggleBlockActiveDisabled}
+              className={`${itemClass} disabled:opacity-40 disabled:cursor-not-allowed`}
+              onClick={() => onToggleBlockActive?.()}
+            >
+              {targetBlockIsActive ? (
+                <EyeOff size={16} />
+              ) : (
+                <Eye size={16} />
+              )}
+              <span>{targetBlockIsActive ? "Disable" : "Enable"}</span>
+            </button>
+            <button
+              type="button"
+              disabled={deleteBlockDisabled}
+              className={`${itemClass} disabled:opacity-40 disabled:cursor-not-allowed`}
+              onClick={() => onDeleteBlock?.()}
+            >
+              <Trash2 size={16} />
+              <span>Delete</span>
+            </button>
+          </>
+        )}
       </div>
     </Popover>
   );
@@ -499,8 +558,10 @@ export const TranscriptBlockTextEditor = ({
   saving,
   onCommit,
   className = "",
+  autoStartEditing = false,
+  emptyPlaceholder = "[Add text here]",
 }) => {
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(() => autoStartEditing);
   const [draft, setDraft] = useState(text ?? "");
 
   const commit = async () => {
@@ -526,6 +587,7 @@ export const TranscriptBlockTextEditor = ({
   };
 
   if (!editing) {
+    const empty = !(text ?? "").trim();
     return (
       <p
         className={`text-sm leading-relaxed text-foreground pl-8 cursor-text wrap-break-word whitespace-pre-wrap ${disabled || saving ? "cursor-not-allowed opacity-60" : ""} ${className}`}
@@ -535,7 +597,11 @@ export const TranscriptBlockTextEditor = ({
           setEditing(true);
         }}
       >
-        {(text ?? "").length ? text : "\u00a0"}
+        {empty ? (
+          <span className="text-muted-foreground">{emptyPlaceholder}</span>
+        ) : (
+          text
+        )}
       </p>
     );
   }
@@ -582,7 +648,8 @@ export const BlockSpeakerDropdown = ({
 
   const handlePick = async (speaker) => {
     handleClose();
-    if (speaker === value || disabled || saving) return;
+    if (disabled || saving) return;
+    if (value !== "" && speaker === value) return;
     await onSelect(speaker);
   };
 
@@ -612,7 +679,7 @@ export const BlockSpeakerDropdown = ({
         {SPEAKER_OPTIONS.map((opt) => (
           <MenuItem
             key={opt}
-            selected={opt === value}
+            selected={Boolean(value) && opt === value}
             onClick={() => handlePick(opt)}
             className="text-sm"
           >

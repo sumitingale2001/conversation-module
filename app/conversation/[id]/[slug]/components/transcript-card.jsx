@@ -3,6 +3,7 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
   ChevronDown,
+  ChevronRight,
   MoreHorizontal,
   FileText,
   Loader2,
@@ -19,9 +20,9 @@ import {
   BlockActionsMenu,
   AddTagPopover,
   TranscriptBlockTextEditor,
-  BlockSpeakerDropdown,
-  SPEAKER_OPTIONS,
+  SpeakerLabel,
 } from "./transcript-card-ui-components";
+import Image from "next/image";
 
 const formatMs = (ms) => {
   if (!ms && ms !== 0) return "00:00";
@@ -34,20 +35,13 @@ const formatMs = (ms) => {
   return h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`;
 };
 
-const getBlockSpeakerOption = (block, transcript) => {
-  if (
-    typeof block?.speaker === "string" &&
-    SPEAKER_OPTIONS.includes(block.speaker)
-  ) {
-    return block.speaker;
-  }
-  const speakers = transcript?.speakers || [];
-  const idx = speakers.findIndex(
-    (s) => s._id?.toString() === block?.speakerId?.toString(),
+const blockHasTimestamp = (block) => {
+  if (block?.isManual === true) return false;
+  return (
+    block?.startTimeMs != null &&
+    block?.startTimeMs !== undefined &&
+    !Number.isNaN(Number(block.startTimeMs))
   );
-  if (idx === 0) return "Speaker 1";
-  if (idx === 1) return "Speaker 2";
-  return "Speaker 1";
 };
 
 const getTimeAgo = (dateString) => {
@@ -87,6 +81,10 @@ const TranscriptCard = () => {
     speakerKey: null,
     blockTime: "00:00",
   });
+  const [blockToFocusId, setBlockToFocusId] = useState(null);
+  const [addingBlock, setAddingBlock] = useState(false);
+  const [deletingBlock, setDeletingBlock] = useState(false);
+  const [togglingBlockActive, setTogglingBlockActive] = useState(false);
 
   const fileInputRef = useRef(null);
   const getConversationRef = useRef(getConversation);
@@ -98,6 +96,12 @@ const TranscriptCard = () => {
   useEffect(() => {
     getConversationRef.current = getConversation;
   });
+
+  useEffect(() => {
+    if (!blockToFocusId) return;
+    const t = setTimeout(() => setBlockToFocusId(null), 150);
+    return () => clearTimeout(t);
+  }, [blockToFocusId]);
 
   const toggleExpanded = (segmentId) => {
     setExpandedSegments((prev) => ({ ...prev, [segmentId]: !prev[segmentId] }));
@@ -139,8 +143,17 @@ const TranscriptCard = () => {
   const clearBlockEditError = () =>
     setBlockEditError({ blockId: null, message: "" });
 
+  const handleSpeakerSaved = async () => {
+    if (!conversation?._id) return;
+    await getConversationRef.current({
+      conversationId: conversation._id,
+      workspaceId,
+    });
+  };
+
   const patchTranscriptBlock = async (block, fields) => {
     if (!transcript?._id || !conversation?._id || isProcessing) return false;
+    if (block?.isActive === false) return false;
     setSavingBlockId(block._id.toString());
     clearBlockEditError();
     try {
@@ -183,6 +196,110 @@ const TranscriptCard = () => {
       speakerKey: null,
       blockTime: "00:00",
     });
+  };
+
+  const handleToggleBlockActiveFromMenu = async () => {
+    const blockId = menuState.blockId;
+    const target =
+      blockId && transcript?.blocks
+        ? transcript.blocks.find((b) => b._id.toString() === blockId)
+        : null;
+    const nextIsActive = target?.isActive === false;
+    closeMenu();
+    if (
+      !blockId ||
+      !target ||
+      !transcript?._id ||
+      !conversation?._id ||
+      isProcessing
+    ) {
+      return;
+    }
+    setTogglingBlockActive(true);
+    clearBlockEditError();
+    try {
+      const res = await conversationServices.toggleTranscriptBlockActive({
+        transcriptId: transcript._id,
+        workspaceId,
+        blockId,
+        isActive: nextIsActive,
+      });
+      if (!res?.success) {
+        setBlockEditError({
+          blockId,
+          message: res?.error || "Could not update block",
+        });
+        return;
+      }
+      await getConversationRef.current({
+        conversationId: conversation._id,
+        workspaceId,
+      });
+    } finally {
+      setTogglingBlockActive(false);
+    }
+  };
+
+  const handleDeleteBlockFromMenu = async () => {
+    const blockId = menuState.blockId;
+    closeMenu();
+    if (!blockId || !transcript?._id || !conversation?._id || isProcessing) {
+      return;
+    }
+    setDeletingBlock(true);
+    clearBlockEditError();
+    try {
+      const res = await conversationServices.deleteTranscriptBlock({
+        transcriptId: transcript._id,
+        workspaceId,
+        blockId,
+      });
+      if (!res?.success) {
+        setBlockEditError({
+          blockId,
+          message: res?.error || "Could not delete block",
+        });
+        return;
+      }
+      await getConversationRef.current({
+        conversationId: conversation._id,
+        workspaceId,
+      });
+    } finally {
+      setDeletingBlock(false);
+    }
+  };
+
+  const handleAddBlockFromMenu = async () => {
+    const afterBlockId = menuState.blockId;
+    closeMenu();
+    if (
+      !afterBlockId ||
+      !transcript?._id ||
+      !conversation?._id ||
+      isProcessing
+    ) {
+      return;
+    }
+    setAddingBlock(true);
+    try {
+      const res = await conversationServices.addTranscriptBlock({
+        transcriptId: transcript._id,
+        workspaceId,
+        afterBlockId,
+      });
+      if (!res?.success) return;
+      const payload = res?.data;
+      const created = payload?.block ?? (payload?._id ? payload : null);
+      const newId = created?._id?.toString?.() ?? null;
+      await getConversationRef.current({
+        conversationId: conversation._id,
+        workspaceId,
+      });
+      if (newId) setBlockToFocusId(newId);
+    } finally {
+      setAddingBlock(false);
+    }
   };
 
   const openAddTagFromMenu = () => {
@@ -240,6 +357,7 @@ const TranscriptCard = () => {
   };
 
   const handlePlayBlock = (block) => {
+    if (block?.isActive === false) return;
     const segmentId = block?.segmentId?.toString();
     if (!segmentId) return;
 
@@ -413,6 +531,13 @@ const TranscriptCard = () => {
     e.target.value = "";
   };
 
+  const menuTargetBlock =
+    menuState.blockId && transcript?.blocks
+      ? transcript.blocks.find((b) => b._id.toString() === menuState.blockId)
+      : null;
+  const manualBlockMenuOnly = menuTargetBlock?.isManual === true;
+  const targetMenuBlockIsActive = menuTargetBlock?.isActive !== false;
+
   if (!segments || segments.length === 0) return null;
 
   const isActionsDisabled =
@@ -429,12 +554,28 @@ const TranscriptCard = () => {
           (index === 0 ? "[Untitled]" : `[Untitled - ${index + 1}]`);
 
         const segmentBlocks = (transcript?.blocks || []).filter((b) => {
-          if (!b.isActive || b.isDeleted) return false;
+          if (b.isDeleted) return false;
           if (b.segmentId)
             return b.segmentId.toString() === segment._id.toString();
           return index === 0;
         });
         const hasBlocks = segmentBlocks.length > 0;
+        const sectionSpeakers = Array.from(
+          new Set(
+            segmentBlocks.map((b) => b.speakerId?.toString()).filter(Boolean),
+          ),
+        )
+          .map((speakerId) => {
+            const resolved = speakerLookup[speakerId];
+            if (!resolved) return null;
+            return {
+              _id: resolved._id?.toString() || speakerId,
+              name: resolved.name || "Speaker",
+              avatarEmoji: resolved.avatarEmoji || "🎙️",
+            };
+          })
+          .filter(Boolean);
+
         const isSegmentCompleted = hasBlocks;
         const isThisSegmentTranscribing = transcribingSegmentId === segment._id;
         const isDisabled =
@@ -530,14 +671,16 @@ const TranscriptCard = () => {
                   /* Speaker-grouped blocks */
                   <div className="flex flex-col">
                     {segmentBlocks.map((block) => {
-                      const effectiveSpeakerId = block.speakerId?.toString() || null;
+                      const blockActive = block.isActive !== false;
+                      const effectiveSpeakerId =
+                        block.speakerId?.toString() || null;
                       const speaker = effectiveSpeakerId
                         ? speakerLookup[effectiveSpeakerId]
                         : null;
                       const speakerKey =
                         effectiveSpeakerId ||
                         `unassigned-${block._id.toString()}`;
-                      const speakerOption = getBlockSpeakerOption(block, transcript);
+                      const showTimestamp = blockHasTimestamp(block);
                       const tags = (block.tagIds || [])
                         .map(
                           (tagId) =>
@@ -548,13 +691,23 @@ const TranscriptCard = () => {
                       return (
                         <div
                           key={block._id}
-                          className="flex gap-3 px-3 py-3 hover:bg-accent/30 rounded-lg transition-colors group"
+                          className={`flex gap-3 px-3 py-3 hover:bg-accent/30 rounded-lg transition-colors group ${!blockActive ? "opacity-50" : ""}`}
+                          data-block-disabled={!blockActive || undefined}
                         >
-                          {/* Timestamp */}
-                          <div className="shrink-0 w-12 text-right">
-                            <span className="text-[11px] font-mono text-muted-foreground">
-                              {formatMs(block.startTimeMs)}
-                            </span>
+                          {/* Timestamp or manual-block indicator */}
+                          <div className="shrink-0 w-12 flex items-start justify-end pt-0.5">
+                            {showTimestamp ? (
+                              <span className="text-[11px] font-mono text-muted-foreground">
+                                {formatMs(block.startTimeMs)}
+                              </span>
+                            ) : (
+                              <Image
+                                src="/logout-arrow.svg"
+                                alt="manual-block"
+                                width={16}
+                                height={16}
+                              />
+                            )}
                           </div>
 
                           {/* Speaker avatar + content */}
@@ -567,15 +720,21 @@ const TranscriptCard = () => {
                                   {speaker?.avatarEmoji || "😀"}
                                 </div>
 
-                                <BlockSpeakerDropdown
-                                  value={speakerOption}
-                                  displayLabel={speaker?.name || speakerOption}
-                                  disabled={isProcessing}
-                                  saving={savingBlockId === block._id.toString()}
-                                  onSelect={(speaker) =>
-                                    patchTranscriptBlock(block, { speaker })
-                                  }
+                                <SpeakerLabel
+                                  speaker={speaker}
+                                  sectionSpeakers={sectionSpeakers}
+                                  transcriptId={transcript?._id}
+                                  workspaceId={workspaceId}
+                                  blockId={block._id}
+                                  onSaved={handleSpeakerSaved}
+                                  disabled={isProcessing || !blockActive}
                                 />
+
+                                {!blockActive && (
+                                  <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground shrink-0">
+                                    Disabled
+                                  </span>
+                                )}
 
                                 {tags.map((tagItem) => (
                                   <span
@@ -592,21 +751,25 @@ const TranscriptCard = () => {
                               </div>
 
                               <div className="flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+                                {showTimestamp && (
+                                  <button
+                                    type="button"
+                                    disabled={!blockActive}
+                                    onClick={() => handlePlayBlock(block)}
+                                    className="h-7 w-7 rounded-full bg-[#1C1C92] text-white flex items-center justify-center cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
+                                  >
+                                    <Play size={14} fill="currentColor" />
+                                  </button>
+                                )}
                                 <button
                                   type="button"
-                                  onClick={() => handlePlayBlock(block)}
-                                  className="h-7 w-7 rounded-full bg-[#1C1C92] text-white flex items-center justify-center cursor-pointer"
-                                >
-                                  <Play size={14} fill="currentColor" />
-                                </button>
-                                <button
-                                  type="button"
+                                  disabled={!blockActive}
                                   onClick={() =>
                                     navigator?.clipboard?.writeText(
                                       block.text || "",
                                     )
                                   }
-                                  className="h-7 w-7 cursor-pointer rounded border border-[#D0D0D0] text-[#6A6A6A] flex items-center justify-center bg-white"
+                                  className="h-7 w-7 cursor-pointer rounded border border-[#D0D0D0] text-[#6A6A6A] flex items-center justify-center bg-white disabled:opacity-40 disabled:pointer-events-none"
                                 >
                                   <Copy size={14} />
                                 </button>
@@ -616,7 +779,9 @@ const TranscriptCard = () => {
                                     handleOpenMenu(event, {
                                       blockId: block._id.toString(),
                                       speakerKey,
-                                      blockTime: formatMs(block.startTimeMs),
+                                      blockTime: showTimestamp
+                                        ? formatMs(block.startTimeMs)
+                                        : "—",
                                     })
                                   }
                                   className="h-7 w-7 cursor-pointer rounded-full text-[#666] flex items-center justify-center hover:bg-[#EFEFEF]"
@@ -626,15 +791,20 @@ const TranscriptCard = () => {
                               </div>
                             </div>
 
-                            {blockEditError.blockId === block._id.toString() && (
+                            {blockEditError.blockId ===
+                              block._id.toString() && (
                               <p className="pl-8 text-[11px] text-red-600">
                                 {blockEditError.message}
                               </p>
                             )}
                             <TranscriptBlockTextEditor
                               text={block.text}
-                              disabled={isProcessing}
+                              disabled={isProcessing || !blockActive}
                               saving={savingBlockId === block._id.toString()}
+                              autoStartEditing={
+                                blockToFocusId === block._id.toString()
+                              }
+                              emptyPlaceholder="[Add text here]"
                               onCommit={async (payload) => {
                                 if (payload?.empty) {
                                   setBlockEditError({
@@ -728,6 +898,17 @@ const TranscriptCard = () => {
         open={Boolean(menuState.anchorEl)}
         onClose={closeMenu}
         onAddTag={openAddTagFromMenu}
+        onAddBlock={handleAddBlockFromMenu}
+        addBlockDisabled={isProcessing || addingBlock}
+        addTagDisabled={isProcessing}
+        onDeleteBlock={handleDeleteBlockFromMenu}
+        deleteBlockDisabled={isProcessing || deletingBlock}
+        onToggleBlockActive={handleToggleBlockActiveFromMenu}
+        toggleBlockActiveDisabled={
+          isProcessing || togglingBlockActive || !menuTargetBlock
+        }
+        targetBlockIsActive={targetMenuBlockIsActive}
+        manualBlockMenuOnly={manualBlockMenuOnly}
       />
       <AddTagPopover
         anchorEl={tagPopoverState.anchorEl}
