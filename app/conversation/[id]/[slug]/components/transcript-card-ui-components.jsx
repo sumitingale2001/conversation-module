@@ -371,6 +371,9 @@ export const BlockActionsMenu = ({
   onToggleBlockActive,
   toggleBlockActiveDisabled,
   targetBlockIsActive = true,
+  showRestore = false,
+  onRestoreBlock,
+  restoreBlockDisabled,
   manualBlockMenuOnly = false,
 }) => {
   const itemClass =
@@ -425,10 +428,17 @@ export const BlockActionsMenu = ({
               <Tag size={16} />
               <span>Add tags</span>
             </button>
-            <button type="button" className={itemClass}>
-              <RotateCcw size={16} />
-              <span>Restore</span>
-            </button>
+            {showRestore ? (
+              <button
+                type="button"
+                disabled={restoreBlockDisabled}
+                className={`${itemClass} disabled:opacity-40 disabled:cursor-not-allowed`}
+                onClick={() => onRestoreBlock?.()}
+              >
+                <RotateCcw size={16} />
+                <span>Restore</span>
+              </button>
+            ) : null}
             <button
               type="button"
               disabled={toggleBlockActiveDisabled}

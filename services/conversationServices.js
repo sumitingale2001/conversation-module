@@ -287,6 +287,15 @@ export const conversationServices = {
     );
   },
 
+  async restoreTranscriptBlock(payload) {
+    if (!payload?.transcriptId || !payload?.workspaceId || !payload?.blockId) {
+      return null;
+    }
+    return await request(
+      apiInstance.patch("/transcript/block/restore", payload),
+    );
+  },
+
   async getAllTags(userId) {
     if (!userId) return null;
     return await request(apiInstance.get(`/tags/all?userId=${userId}`));

@@ -2,9 +2,9 @@
 
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
+  Check,
   ChevronDown,
   ChevronRight,
-  MoreHorizontal,
   FileText,
   Loader2,
   Play,
@@ -35,13 +35,28 @@ const formatMs = (ms) => {
   return h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`;
 };
 
-const blockHasTimestamp = (block) => {
-  if (block?.isManual === true) return false;
-  return (
-    block?.startTimeMs != null &&
-    block?.startTimeMs !== undefined &&
-    !Number.isNaN(Number(block.startTimeMs))
-  );
+const getBlockStartMs = (block) => {
+  if (block?.startTimeMs != null && block?.startTimeMs !== "") {
+    const n = Number(block.startTimeMs);
+    if (!Number.isNaN(n)) return n;
+  }
+  if (block?.startTime != null && block?.startTime !== "") {
+    const n = Number(block.startTime);
+    if (!Number.isNaN(n)) return n * 1000;
+  }
+  return null;
+};
+
+const getBlockEndMs = (block) => {
+  if (block?.endTimeMs != null && block?.endTimeMs !== "") {
+    const n = Number(block.endTimeMs);
+    if (!Number.isNaN(n)) return n;
+  }
+  if (block?.endTime != null && block?.endTime !== "") {
+    const n = Number(block.endTime);
+    if (!Number.isNaN(n)) return n * 1000;
+  }
+  return null;
 };
 
 const getTimeAgo = (dateString) => {
@@ -52,6 +67,32 @@ const getTimeAgo = (dateString) => {
   const h = Math.floor(diffMins / 60);
   if (h < 24) return `${h} hour${h > 1 ? "s" : ""} ago`;
   return `${Math.floor(h / 24)} days ago`;
+};
+
+const copyTextToClipboard = async (text) => {
+  const value = text ?? "";
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch {
+      /* fallback */
+    }
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = value;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
 };
 
 const TranscriptCard = () => {
@@ -85,11 +126,14 @@ const TranscriptCard = () => {
   const [addingBlock, setAddingBlock] = useState(false);
   const [deletingBlock, setDeletingBlock] = useState(false);
   const [togglingBlockActive, setTogglingBlockActive] = useState(false);
+  const [restoringBlock, setRestoringBlock] = useState(false);
+  const [copiedBlockId, setCopiedBlockId] = useState(null);
 
   const fileInputRef = useRef(null);
   const getConversationRef = useRef(getConversation);
   const audioPlayerRef = useRef(null);
   const stopPlaybackTimerRef = useRef(null);
+  const copySuccessTimeoutRef = useRef(null);
 
   const isProcessing = conversation?.status === "processing";
 
@@ -102,6 +146,27 @@ const TranscriptCard = () => {
     const t = setTimeout(() => setBlockToFocusId(null), 150);
     return () => clearTimeout(t);
   }, [blockToFocusId]);
+
+  useEffect(() => {
+    return () => {
+      if (copySuccessTimeoutRef.current) {
+        clearTimeout(copySuccessTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopyBlockText = async (blockId, text) => {
+    const ok = await copyTextToClipboard(String(text ?? ""));
+    if (!ok) return;
+    if (copySuccessTimeoutRef.current) {
+      clearTimeout(copySuccessTimeoutRef.current);
+    }
+    setCopiedBlockId(blockId);
+    copySuccessTimeoutRef.current = setTimeout(() => {
+      setCopiedBlockId(null);
+      copySuccessTimeoutRef.current = null;
+    }, 2000);
+  };
 
   const toggleExpanded = (segmentId) => {
     setExpandedSegments((prev) => ({ ...prev, [segmentId]: !prev[segmentId] }));
@@ -196,6 +261,36 @@ const TranscriptCard = () => {
       speakerKey: null,
       blockTime: "00:00",
     });
+  };
+
+  const handleRestoreBlockFromMenu = async () => {
+    const blockId = menuState.blockId;
+    closeMenu();
+    if (!blockId || !transcript?._id || !conversation?._id || isProcessing) {
+      return;
+    }
+    setRestoringBlock(true);
+    clearBlockEditError();
+    try {
+      const res = await conversationServices.restoreTranscriptBlock({
+        transcriptId: transcript._id,
+        workspaceId,
+        blockId,
+      });
+      if (!res?.success) {
+        setBlockEditError({
+          blockId,
+          message: res?.error || "Could not restore block",
+        });
+        return;
+      }
+      await getConversationRef.current({
+        conversationId: conversation._id,
+        workspaceId,
+      });
+    } finally {
+      setRestoringBlock(false);
+    }
   };
 
   const handleToggleBlockActiveFromMenu = async () => {
@@ -358,6 +453,7 @@ const TranscriptCard = () => {
 
   const handlePlayBlock = (block) => {
     if (block?.isActive === false) return;
+    if (block?.isManual === true) return;
     const segmentId = block?.segmentId?.toString();
     if (!segmentId) return;
 
@@ -366,8 +462,10 @@ const TranscriptCard = () => {
     if (!fileUrl) return;
 
     const segmentStartSec = Number(segment?.startTime || 0);
-    const blockStartSec = Number(block?.startTimeMs || 0) / 1000;
-    const blockEndSec = Number(block?.endTimeMs || 0) / 1000;
+    const blockStartMs = getBlockStartMs(block) ?? 0;
+    const blockEndMs = getBlockEndMs(block) ?? blockStartMs;
+    const blockStartSec = blockStartMs / 1000;
+    const blockEndSec = blockEndMs / 1000;
     const startFrom = Math.max(0, blockStartSec - segmentStartSec);
     const stopAt = Math.max(startFrom, blockEndSec - segmentStartSec);
 
@@ -537,6 +635,7 @@ const TranscriptCard = () => {
       : null;
   const manualBlockMenuOnly = menuTargetBlock?.isManual === true;
   const targetMenuBlockIsActive = menuTargetBlock?.isActive !== false;
+  const showRestoreInMenu = menuTargetBlock?.isEdited === true;
 
   if (!segments || segments.length === 0) return null;
 
@@ -635,8 +734,16 @@ const TranscriptCard = () => {
                     )}
                   </button>
                 )}
-                <button className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground">
-                  <MoreHorizontal className="h-4 w-4" />
+                <button
+                  type="button"
+                  className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  <Image
+                    src="/three-dots.svg"
+                    alt="three-dots"
+                    width={20}
+                    height={20}
+                  />
                 </button>
               </div>
             </div>
@@ -671,6 +778,7 @@ const TranscriptCard = () => {
                   /* Speaker-grouped blocks */
                   <div className="flex flex-col">
                     {segmentBlocks.map((block) => {
+                      const blockIsEdited = block.isEdited === true;
                       const blockActive = block.isActive !== false;
                       const effectiveSpeakerId =
                         block.speakerId?.toString() || null;
@@ -680,7 +788,8 @@ const TranscriptCard = () => {
                       const speakerKey =
                         effectiveSpeakerId ||
                         `unassigned-${block._id.toString()}`;
-                      const showTimestamp = blockHasTimestamp(block);
+                      const isManualBlock = block?.isManual === true;
+                      const blockStartMs = getBlockStartMs(block);
                       const tags = (block.tagIds || [])
                         .map(
                           (tagId) =>
@@ -691,14 +800,15 @@ const TranscriptCard = () => {
                       return (
                         <div
                           key={block._id}
-                          className={`flex gap-3 px-3 py-3 hover:bg-accent/30 rounded-lg transition-colors group ${!blockActive ? "opacity-50" : ""}`}
+                          className={`flex gap-3 px-3 py-3 rounded-lg transition-colors group hover:bg-[#ECECED] ${!blockActive ? "opacity-50" : ""} ${blockIsEdited ? "bg-muted/50" : ""}`}
                           data-block-disabled={!blockActive || undefined}
+                          data-block-edited={blockIsEdited || undefined}
                         >
                           {/* Timestamp or manual-block indicator */}
                           <div className="shrink-0 w-12 flex items-start justify-end pt-0.5">
-                            {showTimestamp ? (
+                            {!isManualBlock ? (
                               <span className="text-[11px] font-mono text-muted-foreground">
-                                {formatMs(block.startTimeMs)}
+                                {formatMs(blockStartMs ?? 0)}
                               </span>
                             ) : (
                               <Image
@@ -750,8 +860,14 @@ const TranscriptCard = () => {
                                 ))}
                               </div>
 
-                              <div className="flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100">
-                                {showTimestamp && (
+                              <div
+                                className={`flex items-center gap-2 transition-opacity ${
+                                  copiedBlockId === block._id.toString()
+                                    ? "opacity-100"
+                                    : "opacity-0 group-hover:opacity-100"
+                                }`}
+                              >
+                                {!isManualBlock && (
                                   <button
                                     type="button"
                                     disabled={!blockActive}
@@ -763,15 +879,31 @@ const TranscriptCard = () => {
                                 )}
                                 <button
                                   type="button"
-                                  disabled={!blockActive}
-                                  onClick={() =>
-                                    navigator?.clipboard?.writeText(
-                                      block.text || "",
-                                    )
-                                  }
+                                  disabled={isProcessing}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    void handleCopyBlockText(
+                                      block._id.toString(),
+                                      block.text,
+                                    );
+                                  }}
                                   className="h-7 w-7 cursor-pointer rounded border border-[#D0D0D0] text-[#6A6A6A] flex items-center justify-center bg-white disabled:opacity-40 disabled:pointer-events-none"
+                                  aria-label={
+                                    copiedBlockId === block._id.toString()
+                                      ? "Copied"
+                                      : "Copy"
+                                  }
                                 >
-                                  <Copy size={14} />
+                                  {copiedBlockId === block._id.toString() ? (
+                                    <Check
+                                      size={14}
+                                      className="text-green-600"
+                                      strokeWidth={2.5}
+                                    />
+                                  ) : (
+                                    <Copy size={14} />
+                                  )}
                                 </button>
                                 <button
                                   type="button"
@@ -779,14 +911,19 @@ const TranscriptCard = () => {
                                     handleOpenMenu(event, {
                                       blockId: block._id.toString(),
                                       speakerKey,
-                                      blockTime: showTimestamp
-                                        ? formatMs(block.startTimeMs)
+                                      blockTime: !isManualBlock
+                                        ? formatMs(blockStartMs ?? 0)
                                         : "—",
                                     })
                                   }
                                   className="h-7 w-7 cursor-pointer rounded-full text-[#666] flex items-center justify-center hover:bg-[#EFEFEF]"
                                 >
-                                  <MoreHorizontal size={16} />
+                                  <Image
+                                    src="/three-dots.svg"
+                                    alt="More options"
+                                    width={20}
+                                    height={20}
+                                  />
                                 </button>
                               </div>
                             </div>
@@ -908,6 +1045,9 @@ const TranscriptCard = () => {
           isProcessing || togglingBlockActive || !menuTargetBlock
         }
         targetBlockIsActive={targetMenuBlockIsActive}
+        showRestore={showRestoreInMenu}
+        onRestoreBlock={handleRestoreBlockFromMenu}
+        restoreBlockDisabled={isProcessing || restoringBlock}
         manualBlockMenuOnly={manualBlockMenuOnly}
       />
       <AddTagPopover
