@@ -202,6 +202,11 @@ export const conversationServices = {
     return await request(apiInstance.patch("/transcript/block/reassign-speaker", payload));
   },
 
+  async updateTranscriptBlock(payload) {
+    if (!payload?.transcriptId || !payload?.workspaceId || !payload?.blockId) return null;
+    return await request(apiInstance.patch("/transcript/block/update", payload));
+  },
+
   async getAllTags(userId) {
     if (!userId) return null;
     return await request(apiInstance.get(`/tags/all?userId=${userId}`));

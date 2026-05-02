@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef } from "react";
 import {
   ChevronDown,
   Loader2,
@@ -13,7 +13,7 @@ import {
   PenLine,
 } from "lucide-react";
 import EmojiPicker from "emoji-picker-react";
-import { Popover } from "@mui/material";
+import { Popover, Menu, MenuItem } from "@mui/material";
 import { createPortal } from "react-dom";
 import { conversationServices } from "../../../../../services/conversationServices";
 
@@ -488,5 +488,138 @@ export const AddTagPopover = ({
         </div>
       </div>
     </Popover>
+  );
+};
+
+export const SPEAKER_OPTIONS = ["Speaker 1", "Speaker 2"];
+
+export const TranscriptBlockTextEditor = ({
+  text,
+  disabled,
+  saving,
+  onCommit,
+  className = "",
+}) => {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(text ?? "");
+
+  const commit = async () => {
+    if (disabled || saving) {
+      setEditing(false);
+      return;
+    }
+    const prev = (text ?? "").trim();
+    const next = draft.trim();
+    if (next === prev) {
+      setEditing(false);
+      return;
+    }
+    if (next.length === 0) {
+      setDraft(text ?? "");
+      setEditing(false);
+      await onCommit({ empty: true });
+      return;
+    }
+    const ok = await onCommit({ text: next });
+    if (!ok) setDraft(text ?? "");
+    setEditing(false);
+  };
+
+  if (!editing) {
+    return (
+      <p
+        className={`text-sm leading-relaxed text-foreground pl-8 cursor-text wrap-break-word whitespace-pre-wrap ${disabled || saving ? "cursor-not-allowed opacity-60" : ""} ${className}`}
+        onClick={() => {
+          if (disabled || saving) return;
+          setDraft(text ?? "");
+          setEditing(true);
+        }}
+      >
+        {(text ?? "").length ? text : "\u00a0"}
+      </p>
+    );
+  }
+
+  const rowCount = Math.min(24, Math.max(3, draft.split("\n").length + 1));
+
+  return (
+    <textarea
+      autoFocus
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setDraft(text ?? "");
+          setEditing(false);
+          return;
+        }
+        if (e.key === "Enter" && e.shiftKey) return;
+        if (e.key === "Enter") {
+          if (e.nativeEvent.isComposing) return;
+          e.preventDefault();
+          commit();
+        }
+      }}
+      disabled={disabled || saving}
+      rows={rowCount}
+      className="w-full min-h-[4rem] resize-y bg-transparent border-0 p-0 text-sm leading-relaxed text-foreground outline-none focus:outline-none focus:ring-0 focus-visible:outline-none shadow-none ring-0 pl-8 wrap-break-word disabled:opacity-60"
+    />
+  );
+};
+
+export const BlockSpeakerDropdown = ({
+  value,
+  displayLabel,
+  disabled,
+  saving,
+  onSelect,
+}) => {
+  const [anchorEl, setAnchorEl] = useState(null);
+  const open = Boolean(anchorEl);
+
+  const handleClose = () => setAnchorEl(null);
+
+  const handlePick = async (speaker) => {
+    handleClose();
+    if (speaker === value || disabled || saving) return;
+    await onSelect(speaker);
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        disabled={disabled || saving}
+        onClick={(e) => !disabled && !saving && setAnchorEl(e.currentTarget)}
+        className="flex items-center gap-1 text-xs font-semibold text-foreground hover:text-primary transition-colors disabled:opacity-60 disabled:pointer-events-none"
+      >
+        <span className="truncate max-w-[140px]">{displayLabel || value}</span>
+        <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+      </button>
+      <Menu
+        anchorEl={anchorEl}
+        open={open}
+        onClose={handleClose}
+        anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+        transformOrigin={{ vertical: "top", horizontal: "left" }}
+        slotProps={{
+          paper: {
+            className: "mt-1 rounded-lg border border-gray-200 shadow-sm",
+          },
+        }}
+      >
+        {SPEAKER_OPTIONS.map((opt) => (
+          <MenuItem
+            key={opt}
+            selected={opt === value}
+            onClick={() => handlePick(opt)}
+            className="text-sm"
+          >
+            {opt}
+          </MenuItem>
+        ))}
+      </Menu>
+    </>
   );
 };

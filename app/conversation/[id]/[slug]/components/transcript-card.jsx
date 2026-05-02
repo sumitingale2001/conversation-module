@@ -16,9 +16,11 @@ import apiInstance from "../../../../../config/apiInstance";
 import useGetConversation from "../../../../../hooks/use-get-conversation";
 import { useRecordingStore } from "../../../../../store/recording.store";
 import {
-  SpeakerLabel,
   BlockActionsMenu,
   AddTagPopover,
+  TranscriptBlockTextEditor,
+  BlockSpeakerDropdown,
+  SPEAKER_OPTIONS,
 } from "./transcript-card-ui-components";
 
 const formatMs = (ms) => {
@@ -30,6 +32,22 @@ const formatMs = (ms) => {
     .padStart(2, "0");
   const s = (totalSeconds % 60).toString().padStart(2, "0");
   return h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`;
+};
+
+const getBlockSpeakerOption = (block, transcript) => {
+  if (
+    typeof block?.speaker === "string" &&
+    SPEAKER_OPTIONS.includes(block.speaker)
+  ) {
+    return block.speaker;
+  }
+  const speakers = transcript?.speakers || [];
+  const idx = speakers.findIndex(
+    (s) => s._id?.toString() === block?.speakerId?.toString(),
+  );
+  if (idx === 0) return "Speaker 1";
+  if (idx === 1) return "Speaker 2";
+  return "Speaker 1";
 };
 
 const getTimeAgo = (dateString) => {
@@ -52,9 +70,11 @@ const TranscriptCard = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
   const [expandedSegments, setExpandedSegments] = useState({});
-  // Local speaker names cache for optimistic updates (stores {name, emoji})
-  const [speakerNames, setSpeakerNames] = useState({});
-  const [blockSpeakerOverrides, setBlockSpeakerOverrides] = useState({});
+  const [savingBlockId, setSavingBlockId] = useState(null);
+  const [blockEditError, setBlockEditError] = useState({
+    blockId: null,
+    message: "",
+  });
   const [menuState, setMenuState] = useState({
     anchorEl: null,
     blockId: null,
@@ -87,24 +107,14 @@ const TranscriptCard = () => {
   const speakerLookup = useMemo(() => {
     const map = {};
     (transcript?.speakers || []).forEach((s) => {
-      const override = speakerNames[s._id.toString()];
       map[s._id.toString()] = {
         ...s,
-        name: override?.name || s.name,
-        avatarEmoji: override?.emoji || s.avatarEmoji || "🎙️",
+        name: s.name,
+        avatarEmoji: s.avatarEmoji || "🎙️",
       };
     });
-    Object.entries(speakerNames).forEach(([speakerId, value]) => {
-      if (!map[speakerId]) {
-        map[speakerId] = {
-          _id: speakerId,
-          name: value?.name || "Assign Speaker",
-          avatarEmoji: value?.emoji || "🎙️",
-        };
-      }
-    });
     return map;
-  }, [transcript?.speakers, speakerNames]);
+  }, [transcript?.speakers]);
 
   const transcriptTagLookup = useMemo(() => {
     const map = {};
@@ -126,19 +136,34 @@ const TranscriptCard = () => {
     return map;
   }, [segments]);
 
-  const handleSpeakerSaved = ({ speakerId, blockId, name, emoji }) => {
-    if (speakerId) {
-      setSpeakerNames((prev) => ({
-        ...prev,
-        [speakerId.toString()]: { name, emoji },
-      }));
-    }
+  const clearBlockEditError = () =>
+    setBlockEditError({ blockId: null, message: "" });
 
-    if (blockId && speakerId) {
-      setBlockSpeakerOverrides((prev) => ({
-        ...prev,
-        [blockId.toString()]: speakerId.toString(),
-      }));
+  const patchTranscriptBlock = async (block, fields) => {
+    if (!transcript?._id || !conversation?._id || isProcessing) return false;
+    setSavingBlockId(block._id.toString());
+    clearBlockEditError();
+    try {
+      const res = await conversationServices.updateTranscriptBlock({
+        transcriptId: transcript._id,
+        workspaceId,
+        blockId: block._id,
+        ...fields,
+      });
+      if (!res?.success) {
+        setBlockEditError({
+          blockId: block._id.toString(),
+          message: res?.error || "Could not update block",
+        });
+        return false;
+      }
+      await getConversationRef.current({
+        conversationId: conversation._id,
+        workspaceId,
+      });
+      return true;
+    } finally {
+      setSavingBlockId(null);
     }
   };
 
@@ -409,28 +434,6 @@ const TranscriptCard = () => {
             return b.segmentId.toString() === segment._id.toString();
           return index === 0;
         });
-        const sectionSpeakers = Array.from(
-          new Set(
-            segmentBlocks
-              .map(
-                (b) =>
-                  blockSpeakerOverrides[b._id.toString()] ||
-                  b.speakerId?.toString(),
-              )
-              .filter(Boolean),
-          ),
-        )
-          .map((speakerId) => {
-            const resolved = speakerLookup[speakerId];
-            if (!resolved) return null;
-            return {
-              _id: resolved._id?.toString() || speakerId,
-              name: resolved.name || "Speaker",
-              avatarEmoji: resolved.avatarEmoji || "🎙️",
-            };
-          })
-          .filter(Boolean);
-
         const hasBlocks = segmentBlocks.length > 0;
         const isSegmentCompleted = hasBlocks;
         const isThisSegmentTranscribing = transcribingSegmentId === segment._id;
@@ -527,16 +530,14 @@ const TranscriptCard = () => {
                   /* Speaker-grouped blocks */
                   <div className="flex flex-col">
                     {segmentBlocks.map((block) => {
-                      const effectiveSpeakerId =
-                        blockSpeakerOverrides[block._id.toString()] ||
-                        block.speakerId?.toString() ||
-                        null;
+                      const effectiveSpeakerId = block.speakerId?.toString() || null;
                       const speaker = effectiveSpeakerId
                         ? speakerLookup[effectiveSpeakerId]
                         : null;
                       const speakerKey =
                         effectiveSpeakerId ||
                         `unassigned-${block._id.toString()}`;
+                      const speakerOption = getBlockSpeakerOption(block, transcript);
                       const tags = (block.tagIds || [])
                         .map(
                           (tagId) =>
@@ -566,13 +567,14 @@ const TranscriptCard = () => {
                                   {speaker?.avatarEmoji || "😀"}
                                 </div>
 
-                                <SpeakerLabel
-                                  speaker={speaker}
-                                  sectionSpeakers={sectionSpeakers}
-                                  transcriptId={transcript?._id}
-                                  workspaceId={workspaceId}
-                                  blockId={block._id}
-                                  onSaved={handleSpeakerSaved}
+                                <BlockSpeakerDropdown
+                                  value={speakerOption}
+                                  displayLabel={speaker?.name || speakerOption}
+                                  disabled={isProcessing}
+                                  saving={savingBlockId === block._id.toString()}
+                                  onSelect={(speaker) =>
+                                    patchTranscriptBlock(block, { speaker })
+                                  }
                                 />
 
                                 {tags.map((tagItem) => (
@@ -624,10 +626,28 @@ const TranscriptCard = () => {
                               </div>
                             </div>
 
-                            {/* Block text */}
-                            <p className="text-sm leading-relaxed text-foreground pl-8">
-                              {block.text}
-                            </p>
+                            {blockEditError.blockId === block._id.toString() && (
+                              <p className="pl-8 text-[11px] text-red-600">
+                                {blockEditError.message}
+                              </p>
+                            )}
+                            <TranscriptBlockTextEditor
+                              text={block.text}
+                              disabled={isProcessing}
+                              saving={savingBlockId === block._id.toString()}
+                              onCommit={async (payload) => {
+                                if (payload?.empty) {
+                                  setBlockEditError({
+                                    blockId: block._id.toString(),
+                                    message: "Text cannot be empty",
+                                  });
+                                  return false;
+                                }
+                                return patchTranscriptBlock(block, {
+                                  text: payload.text,
+                                });
+                              }}
+                            />
                           </div>
                         </div>
                       );
