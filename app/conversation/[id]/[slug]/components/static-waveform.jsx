@@ -8,6 +8,7 @@ import { useRecordingStore } from '../../../../../store/recording.store';
 import { conversationServices } from '../../../../../services/conversationServices';
 import { workspaceId } from '../../../../../utils/conversation.utils';
 import useGetConversation from '../../../../../hooks/use-get-conversation';
+import { AddTagPopover, BookmarkTagsHoverPopover } from './transcript-card-ui-components';
 
 const formatTimer = (seconds) => {
     if (!seconds) return "00:00:00";
@@ -42,7 +43,8 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
     const isPausedRef = useRef(false);
     const durationRef = useRef(0);
     const { conversation, segments } = useConversationStore();
-    const { duration, title, isPaused, isRecording, markers } = useRecordingStore();
+    const { duration, title, isPaused, isRecording, markers, localTagDefinitions } =
+        useRecordingStore();
     const { getConversation } = useGetConversation();
 
     const [activePopover, setActivePopover] = useState(null);
@@ -57,6 +59,23 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
     const [dragIndex, setDragIndex] = useState(null);
     const [dragOverIndex, setDragOverIndex] = useState(null);
     const [isReordering, setIsReordering] = useState(false);
+    const [tagMarkerAnchor, setTagMarkerAnchor] = useState({ markerId: null, el: null });
+    const [tagHoverAnchor, setTagHoverAnchor] = useState({ markerId: null, el: null });
+    const tagHoverLeaveTimerRef = useRef(null);
+
+    const clearTagHoverTimer = useCallback(() => {
+        if (tagHoverLeaveTimerRef.current) {
+            clearTimeout(tagHoverLeaveTimerRef.current);
+            tagHoverLeaveTimerRef.current = null;
+        }
+    }, []);
+
+    const scheduleTagHoverClose = useCallback(() => {
+        clearTagHoverTimer();
+        tagHoverLeaveTimerRef.current = window.setTimeout(() => {
+            setTagHoverAnchor({ markerId: null, el: null });
+        }, 140);
+    }, [clearTagHoverTimer]);
 
     const isLive = !!(mediaStream && mediaStream.getAudioTracks().length > 0);
     const totalDuration = conversation?.totalDuration || 0;
@@ -71,6 +90,15 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
             setOrderedSegments([]);
         }
     }, [segments]);
+
+    useEffect(() => {
+        if (!isLive) {
+            setTagMarkerAnchor({ markerId: null, el: null });
+            setTagHoverAnchor({ markerId: null, el: null });
+        }
+    }, [isLive]);
+
+    useEffect(() => () => clearTagHoverTimer(), [clearTagHoverTimer]);
 
     const closePopover = useCallback(() => {
         setActivePopover(null);
@@ -419,6 +447,22 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
         );
     };
 
+    const showTagHoverPreview =
+        isLive &&
+        tagHoverAnchor.markerId &&
+        tagHoverAnchor.el &&
+        tagMarkerAnchor.markerId !== tagHoverAnchor.markerId;
+    const tagHoverListForPopper = showTagHoverPreview
+        ? (
+              markers.find((x) => x.id === tagHoverAnchor.markerId)?.tags || []
+          ).map((t) => ({
+              id: t.clientId,
+              label: t.label,
+              type: t.type,
+              ...(t.colorHex ? { colorHex: t.colorHex } : {}),
+          }))
+        : [];
+
     return (
         <div className="relative w-full select-none">
             {/* ── OUTER WAVEFORM CONTAINER ─────────────────────────────────── */}
@@ -445,15 +489,30 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
                                         transform: 'translateX(-50%)',
                                     }}
                                 />
-                                <div
-                                    className="pointer-events-none absolute top-1 z-[45]"
+                                <button
+                                    type="button"
+                                    className="pointer-events-auto absolute top-0.5 z-[45] flex h-7 w-7 items-center justify-center rounded-sm border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-green-500/50"
                                     style={{
                                         left,
                                         transform: 'translateX(-50%)',
                                     }}
+                                    aria-label="Edit bookmark tags"
+                                    onMouseEnter={(e) => {
+                                        clearTagHoverTimer();
+                                        if ((m.tags?.length ?? 0) === 0) return;
+                                        if (tagMarkerAnchor.markerId === m.id) return;
+                                        setTagHoverAnchor({ markerId: m.id, el: e.currentTarget });
+                                    }}
+                                    onMouseLeave={() => scheduleTagHoverClose()}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        clearTagHoverTimer();
+                                        setTagHoverAnchor({ markerId: null, el: null });
+                                        setTagMarkerAnchor({ markerId: m.id, el: e.currentTarget });
+                                    }}
                                 >
                                     <Diamond className="h-3.5 w-3.5 fill-green-500 text-green-500 drop-shadow-[0_1px_1px_rgba(0,0,0,0.12)]" strokeWidth={2} />
-                                </div>
+                                </button>
                             </React.Fragment>
                         );
                     })}
@@ -673,6 +732,54 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
                     </div>
                 )}
             </div>
+
+            {isLive && (
+                <>
+                <BookmarkTagsHoverPopover
+                    open={Boolean(tagHoverAnchor.el && tagHoverListForPopper.length)}
+                    anchorEl={tagHoverAnchor.el}
+                    tags={tagHoverListForPopper}
+                    onPaperMouseEnter={clearTagHoverTimer}
+                    onPaperMouseLeave={scheduleTagHoverClose}
+                />
+                <AddTagPopover
+                    anchorEl={tagMarkerAnchor.el}
+                    open={Boolean(tagMarkerAnchor.el && tagMarkerAnchor.markerId)}
+                    onClose={() => setTagMarkerAnchor({ markerId: null, el: null })}
+                    blockTime={formatTimer(
+                        markers.find((x) => x.id === tagMarkerAnchor.markerId)?.timestamp ?? 0,
+                    )}
+                    existingTags={(
+                        markers.find((x) => x.id === tagMarkerAnchor.markerId)?.tags || []
+                    ).map((t) => ({
+                        id: t.clientId,
+                        label: t.label,
+                        type: t.type,
+                        ...(t.colorHex ? { colorHex: t.colorHex } : {}),
+                    }))}
+                    onSaveTag={(payload) => {
+                        if (tagMarkerAnchor.markerId) {
+                            useRecordingStore
+                                .getState()
+                                .addMarkerTag(tagMarkerAnchor.markerId, payload);
+                        }
+                    }}
+                    recordingApi={{
+                        definitions: localTagDefinitions,
+                        addDefinition: (p) =>
+                            useRecordingStore.getState().addLocalTagDefinition(p),
+                        updateDefinition: (id, patch) =>
+                            useRecordingStore.getState().updateLocalTagDefinition(id, patch),
+                        removeDefinition: (id) =>
+                            useRecordingStore.getState().removeLocalTagDefinition(id),
+                        reorderDefinitions: (ids) =>
+                            useRecordingStore.getState().reorderLocalTagDefinitions(ids),
+                        toggleQuickBar: (id) =>
+                            useRecordingStore.getState().toggleTagShowInQuickBar(id),
+                    }}
+                />
+                </>
+            )}
 
             {/* ── TIMELINE RULER ───────────────────────────────────────────── */}
             <div className="mt-2 flex flex-col gap-1 px-0.5">

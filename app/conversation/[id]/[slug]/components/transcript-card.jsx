@@ -453,7 +453,8 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
   };
 
   const saveTagForSpeaker = async (label) => {
-    const normalized = label.trim();
+    const raw = typeof label === "string" ? label : label?.label;
+    const normalized = (raw || "").trim();
     if (!normalized || !tagPopoverState.blockId || !transcript?._id) return;
 
     const allTagsRes = await conversationServices.getAllTags(userId);

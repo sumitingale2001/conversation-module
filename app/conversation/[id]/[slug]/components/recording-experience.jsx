@@ -15,7 +15,55 @@ import apiInstance from '../../../../../config/apiInstance';
 import { conversationServices, roundVal } from '../../../../../services/conversationServices';
 import TranscriptCard from './transcript-card';
 import RecordingPanel from './recording-panel';
-import { workspaceId } from '../../../../../utils/conversation.utils';
+import { userId, workspaceId } from '../../../../../utils/conversation.utils';
+
+async function syncRecordingMarkersToTimeline(markers, conversationId) {
+    if (!conversationId || !workspaceId || !userId) return;
+    const withTags = (markers || []).filter((m) => (m.tags?.length ?? 0) > 0);
+    if (withTags.length === 0) return;
+
+    let allTags = [];
+    const allTagsRes = await conversationServices.getAllTags(userId);
+    if (allTagsRes?.success !== false) {
+        allTags = allTagsRes?.data?.tags || [];
+    }
+
+    const ensureTag = async (rawLabel) => {
+        const normalized = rawLabel.trim();
+        if (!normalized) return null;
+        let selected = allTags.find(
+            (tag) => tag?.name?.trim?.()?.toLowerCase() === normalized.toLowerCase(),
+        );
+        if (!selected) {
+            const createRes = await conversationServices.createTag({
+                userId,
+                name: normalized,
+            });
+            selected = createRes?.data?.tag || null;
+            if (selected) allTags = [...allTags, selected];
+        }
+        return selected;
+    };
+
+    for (const m of withTags) {
+        const t = roundVal(m.timestamp);
+        await conversationServices.createTagInstance({
+            conversationId,
+            workspaceId,
+            timestamp: t,
+        });
+        for (const tag of m.tags) {
+            const selectedTag = await ensureTag(tag.label);
+            if (!selectedTag?._id) continue;
+            await conversationServices.attachTag({
+                conversationId,
+                workspaceId,
+                tagId: selectedTag._id,
+                timestamp: t,
+            });
+        }
+    }
+}
 
 const RecordingExperience = ({ slug }) => {
     const router = useRouter();
@@ -44,23 +92,13 @@ const RecordingExperience = ({ slug }) => {
 
     const [error, setError] = useState(false);
     const [pendingSegmentName, setPendingSegmentName] = useState('');
-    const handleDiamondClick = async () => {
+    const handleDiamondClick = () => {
         const rs = useRecordingStore.getState();
         if (!rs.isRecording) return;
         const timestamp = rs.duration;
         rs.addMarker(timestamp);
         if (!rs.isPaused) {
             rs.pauseRecording();
-        }
-        if (!conversation?._id) return;
-        try {
-            await conversationServices.createTagInstance({
-                conversationId: conversation._id,
-                workspaceId,
-                timestamp,
-            });
-        } catch (e) {
-            console.error(e);
         }
     };
 
@@ -139,6 +177,8 @@ const RecordingExperience = ({ slug }) => {
         setError(false);
 
         try {
+            const markersSnapshot = [...useRecordingStore.getState().markers];
+
             // STEP 1 & 2 - STOP RECORDING & GET FINAL BLOB
             // FIX 5: Destructure both blob and duration from the returned object.
             const { blob: finalBlob, duration: finalDuration } = await stopRecording();
@@ -186,6 +226,14 @@ const RecordingExperience = ({ slug }) => {
                     console.warn('Rename non-fatal:', e);
                 }
             }
+
+            try {
+                await syncRecordingMarkersToTimeline(markersSnapshot, conversation?._id);
+            } catch (e) {
+                console.warn('Sync recording bookmarks/tags non-fatal:', e);
+            }
+            useRecordingStore.getState().clearMarkers();
+            useRecordingStore.getState().clearLocalTagDefinitions();
 
             // STEP 5 - WAIT 1–1.5 SECONDS (Stabilization buffer)
             // Gives the server time to persist the appended segment before we fetch.

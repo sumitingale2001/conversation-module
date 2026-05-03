@@ -12,14 +12,25 @@ import {
   EyeOff,
   Trash2,
   PenLine,
+  Pencil,
+  Diamond,
   ArrowUp,
   ArrowDown,
   AudioLines,
 } from "lucide-react";
 import EmojiPicker from "emoji-picker-react";
-import { Popover, Menu, MenuItem } from "@mui/material";
+import {
+  Popover,
+  Menu,
+  MenuItem,
+  Popper,
+  Fade,
+  Paper,
+} from "@mui/material";
 import { createPortal } from "react-dom";
 import { conversationServices } from "../../../../../services/conversationServices";
+import ManageTagsModal from "./manage-tags-modal";
+import { TAG_COLOR_PALETTE } from "./tag-palette";
 
 export const AssignSpeakerPopover = ({
   speaker,
@@ -448,11 +459,7 @@ export const BlockActionsMenu = ({
               className={`${itemClass} disabled:opacity-40 disabled:cursor-not-allowed`}
               onClick={() => onToggleBlockActive?.()}
             >
-              {targetBlockIsActive ? (
-                <EyeOff size={16} />
-              ) : (
-                <Eye size={16} />
-              )}
+              {targetBlockIsActive ? <EyeOff size={16} /> : <Eye size={16} />}
               <span>{targetBlockIsActive ? "Disable" : "Enable"}</span>
             </button>
             <button
@@ -551,6 +558,92 @@ export const SegmentMainActionsMenu = ({
   );
 };
 
+/** Read-only hover card: vertical luggage-tag shapes for bookmark markers (recording timeline). */
+export const BookmarkTagsHoverPopover = ({
+  open,
+  anchorEl,
+  tags,
+  onPaperMouseEnter,
+  onPaperMouseLeave,
+}) => {
+  const list = tags || [];
+  if (!list.length) return null;
+
+  return (
+    <Popper
+      open={open && Boolean(anchorEl)}
+      anchorEl={anchorEl}
+      placement="right"
+      transition
+      sx={{ zIndex: 1300 }}
+      modifiers={[
+        { name: "offset", options: { offset: [10, 0] } },
+        { name: "preventOverflow", options: { padding: 8 } },
+      ]}
+    >
+      {({ TransitionProps }) => (
+        <Fade {...TransitionProps} timeout={120}>
+          <Paper
+            elevation={4}
+            onMouseEnter={onPaperMouseEnter}
+            onMouseLeave={onPaperMouseLeave}
+            className="max-w-[min(90vw,280px)] rounded-lg border border-[#E8E8E8] bg-white p-[10px] shadow-md"
+          >
+            <ul className="flex flex-col gap-2 p-0 m-0 list-none">
+              {list.map((tagItem) => {
+                let borderColor;
+                let bg;
+                let textColor;
+                if (tagItem.colorHex) {
+                  borderColor = tagItem.colorHex;
+                  bg = tagItem.colorHex;
+                  textColor = "#262626";
+                } else if (tagItem.type === "ask") {
+                  borderColor = "#E8A835";
+                  bg = "#FFF8E7";
+                  textColor = "#B87400";
+                } else {
+                  borderColor = "#5E8BFF";e
+                  bg = "#EAF1FF";
+                  textColor = "#2F68FF";
+                }
+                return (
+                  <li key={tagItem.id} className="flex justify-center">
+                    <div className="flex max-w-full items-stretch">
+                      <div
+                        className="shrink-0 self-center"
+                        style={{
+                          width: 0,
+                          height: 0,
+                          borderTop: "11px solid transparent",
+                          borderBottom: "11px solid transparent",
+                          borderRight: `10px solid ${borderColor}`,
+                        }}
+                        aria-hidden
+                      />
+                      <span
+                        className="-ml-px flex min-h-[30px] max-w-full items-center justify-center truncate rounded-r-lg border border-l-0 px-3 py-1 text-center text-sm font-medium leading-tight"
+                        style={{
+                          borderColor,
+                          backgroundColor: bg,
+                          color: textColor,
+                        }}
+                        title={tagItem.label}
+                      >
+                        {tagItem.label}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </Paper>
+        </Fade>
+      )}
+    </Popper>
+  );
+};
+
 export const AddTagPopover = ({
   anchorEl,
   open,
@@ -558,88 +651,203 @@ export const AddTagPopover = ({
   blockTime,
   existingTags,
   onSaveTag,
+  /** When set, enables Manage Tags + quick bar + random accent color (live recording). */
+  recordingApi,
 }) => {
   const [newTag, setNewTag] = useState("");
+  const [selectedColor, setSelectedColor] = useState(
+    () =>
+      TAG_COLOR_PALETTE[Math.floor(Math.random() * TAG_COLOR_PALETTE.length)],
+  );
+  const [manageOpen, setManageOpen] = useState(false);
+
+  const isRecording = Boolean(recordingApi);
+  const quickTags = isRecording
+    ? [...(recordingApi.definitions || [])]
+        .filter((d) => d.showInQuickBar)
+        .sort((a, b) => a.order - b.order)
+    : [];
 
   const canSave = newTag.trim().length > 0;
 
+  const pillClassForTag = (tagItem) => {
+    if (tagItem.colorHex) {
+      return "inline-flex h-7 items-center rounded-full border border-black/10 px-3 text-sm font-medium text-[#262626]";
+    }
+    return `inline-flex h-7 items-center rounded-full px-3 text-sm ${
+      tagItem.type === "ask"
+        ? "border border-[#F1B84A] bg-[#FFF2D8] text-[#B87400]"
+        : "border border-[#5E8BFF] bg-[#EAF1FF] text-[#2F68FF]"
+    }`;
+  };
+
+  const assignQuickTag = (def) => {
+    onSaveTag?.({
+      label: def.name,
+      colorHex: def.colorHex,
+      tagDefId: def.id,
+    });
+    if (isRecording) onClose?.();
+  };
+
+  const submitNewTag = () => {
+    const t = newTag.trim();
+    if (!t) return;
+    if (isRecording) {
+      onSaveTag?.({ label: t, colorHex: selectedColor });
+    } else {
+      onSaveTag?.(t);
+    }
+    setNewTag("");
+    setSelectedColor(
+      TAG_COLOR_PALETTE[Math.floor(Math.random() * TAG_COLOR_PALETTE.length)],
+    );
+    if (isRecording) onClose?.();
+  };
+
   return (
-    <Popover
-      open={open}
-      anchorEl={anchorEl}
-      onClose={(_, reason) => {
-        if (reason === "backdropClick" || reason === "escapeKeyDown") {
-          onClose();
-        }
-      }}
-      disableAutoFocus
-      disableEnforceFocus
-      disableRestoreFocus
-      anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
-      transformOrigin={{ vertical: "top", horizontal: "left" }}
-      PaperProps={{
-        className: "rounded-[16px] border border-[#E5E5E5] shadow-md",
-      }}
-    >
-      <div className="w-[430px] p-4">
-        <div className="flex items-center justify-between">
-          <p className="leading-none font-semibold text-[#2A2A2A]">
-            {blockTime}
-          </p>
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-7 w-7 rounded-full text-[#7A7A7A] hover:bg-gray-100"
-          >
-            -
-          </button>
-        </div>
-
-        <div className="mt-4 flex items-center gap-2">
-          <PenLine size={22} className="text-[#666]" />
-          {(existingTags || []).map((tagItem) => (
-            <span
-              key={tagItem.id}
-              className={`inline-flex h-7 items-center rounded-full px-3 text-sm ${
-                tagItem.type === "ask"
-                  ? "bg-[#FFF2D8] border border-[#F1B84A] text-[#B87400]"
-                  : "bg-[#EAF1FF] border border-[#5E8BFF] text-[#2F68FF]"
-              }`}
+    <>
+      <Popover
+        open={open}
+        anchorEl={anchorEl}
+        onClose={(_, reason) => {
+          if (reason === "backdropClick" || reason === "escapeKeyDown") {
+            onClose();
+          }
+        }}
+        disableAutoFocus
+        disableEnforceFocus
+        disableRestoreFocus
+        anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+        transformOrigin={{ vertical: "top", horizontal: "left" }}
+        TransitionProps={{
+          onEntered: () => {
+            if (!recordingApi) return;
+            setSelectedColor(
+              TAG_COLOR_PALETTE[
+                Math.floor(Math.random() * TAG_COLOR_PALETTE.length)
+              ],
+            );
+          },
+        }}
+        PaperProps={{
+          className:
+            "max-w-[calc(100vw-2rem)] w-[360px] rounded-xl border border-[#E5E5E5] bg-white shadow-md",
+        }}
+      >
+        <div className="box-border py-3 px-4">
+          <div className="flex items-start justify-between">
+            <p className="text-base font-bold leading-none tracking-tight text-gray-900">
+              {blockTime}
+            </p>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-green-600 transition-colors hover:bg-green-50"
             >
-              {tagItem.label}
-            </span>
-          ))}
+              <Diamond
+                className="h-4 w-4 fill-green-500 text-green-500"
+                strokeWidth={2}
+              />
+            </button>
+          </div>
+          <div className=" flex min-h-[32px] flex-wrap items-center gap-2">
+            {isRecording ? (
+              <>
+                <button
+                  type="button"
+                  title="Manage tags"
+                  onClick={() => setManageOpen(true)}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#555] outline-none hover:bg-gray-100"
+                >
+                  <Pencil size={18} strokeWidth={2} />
+                </button>
+                {quickTags.map((def) => (
+                  <button
+                    key={def.id}
+                    type="button"
+                    onClick={() => assignQuickTag(def)}
+                    className="inline-flex max-w-[140px] truncate rounded-full border border-black/10 px-3 py-1 text-sm font-medium text-[#262626] hover:opacity-90"
+                    style={{ backgroundColor: def.colorHex }}
+                  >
+                    {def.name}
+                  </button>
+                ))}
+              </>
+            ) : (
+              <PenLine size={20} className="shrink-0 text-[#666]" />
+            )}
+            {(existingTags || []).map((tagItem) => (
+              <span
+                key={tagItem.id}
+                style={
+                  tagItem.colorHex
+                    ? { backgroundColor: tagItem.colorHex }
+                    : undefined
+                }
+                className={pillClassForTag(tagItem)}
+              >
+                {tagItem.label}
+              </span>
+            ))}
+          </div>
+          <div className="my-2 border-t border-[#D9D9D9]" />
+          <p className="text-sm leading-none text-[#6B6B6B]">
+            Quickly add a new tag
+          </p>
+          <div className="mt-2 flex items-center gap-2">
+            {isRecording ? (
+              <span
+                className="h-10 w-10 shrink-0 rounded-[10px] border border-[#D4D4D4] shadow-inner"
+                style={{ backgroundColor: selectedColor }}
+                title="Tag color"
+                aria-hidden
+              />
+            ) : (
+              <span
+                className="h-10 w-10 shrink-0 rounded-[10px] border border-[#E2B84B] bg-[#FFF4DA]"
+                aria-hidden
+              />
+            )}
+            <input
+              value={newTag}
+              onChange={(e) => setNewTag(e.target.value)}
+              placeholder="Add new"
+              className="h-10 min-w-0 flex-1 rounded-[10px] border border-[#D4D4D4] bg-white px-3 text-base text-[#444] outline-none placeholder:text-[#B2B2B2]"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && canSave) submitNewTag();
+              }}
+            />
+            <button
+              type="button"
+              disabled={!canSave}
+              onClick={submitNewTag}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-[#DCDCDC] text-white disabled:opacity-40"
+            >
+              <Check size={20} strokeWidth={2.5} />
+            </button>
+          </div>
         </div>
+      </Popover>
 
-        <div className="my-3 border-t border-[#D9D9D9]" />
-
-        <p className="text-[#3A3A3A] leading-none">Quickly add a new tag</p>
-
-        <div className="mt-3 flex items-center gap-2">
-          <button
-            type="button"
-            className="h-10 w-10 rounded-[10px] border border-[#E2B84B] bg-[#FFF4DA]"
-          />
-          <input
-            value={newTag}
-            onChange={(e) => setNewTag(e.target.value)}
-            placeholder="Add new"
-            className="h-10 flex-1 rounded-[10px] border border-[#D4D4D4] px-3 text-base text-[#444] outline-none placeholder:text-[#B2B2B2]"
-          />
-          <button
-            type="button"
-            disabled={!canSave}
-            onClick={() => {
-              onSaveTag(newTag.trim());
-              setNewTag("");
-            }}
-            className="h-10 w-10 rounded-[10px] bg-[#DCDCDC] text-white disabled:opacity-70"
-          >
-            <Check size={20} className="mx-auto" />
-          </button>
-        </div>
-      </div>
-    </Popover>
+      {isRecording && recordingApi && (
+        <ManageTagsModal
+          open={manageOpen}
+          onClose={() => setManageOpen(false)}
+          tags={recordingApi.definitions}
+          onAddTag={(p) => recordingApi.addDefinition?.(p)}
+          onUpdateTag={(id, patch) =>
+            recordingApi.updateDefinition?.(id, patch)
+          }
+          onDeleteTag={(id) => recordingApi.removeDefinition?.(id)}
+          onReorder={(orderedIds) =>
+            recordingApi.reorderDefinitions?.(orderedIds)
+          }
+          onToggleQuickBar={(id) => recordingApi.toggleQuickBar?.(id)}
+        />
+      )}
+    </>
   );
 };
 

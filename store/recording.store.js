@@ -70,15 +70,127 @@ export const useRecordingStore = create((set, get) => {
     /** Bookmarks (waveform markers + tag instances) */
     markers: [],
 
+    /** Local tag catalog during recording (Manage Tags); persisted on segment save */
+    localTagDefinitions: [],
+
+    addLocalTagDefinition: ({ name, colorHex }) => {
+        const trimmed = (name || "").trim();
+        if (!trimmed || !colorHex) return null;
+        const id =
+            typeof crypto !== "undefined" && crypto.randomUUID
+                ? crypto.randomUUID()
+                : `def-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        set((state) => {
+            const maxOrder =
+                state.localTagDefinitions.length === 0
+                    ? -1
+                    : Math.max(...state.localTagDefinitions.map((d) => d.order));
+            return {
+                localTagDefinitions: [
+                    ...state.localTagDefinitions,
+                    {
+                        id,
+                        name: trimmed,
+                        colorHex,
+                        order: maxOrder + 1,
+                        showInQuickBar: false,
+                    },
+                ],
+            };
+        });
+        return id;
+    },
+
+    updateLocalTagDefinition: (id, patch) => {
+        if (!id || !patch) return;
+        set((state) => ({
+            localTagDefinitions: state.localTagDefinitions.map((d) =>
+                d.id === id ? { ...d, ...patch } : d,
+            ),
+        }));
+    },
+
+    removeLocalTagDefinition: (id) => {
+        if (!id) return;
+        set((state) => ({
+            localTagDefinitions: state.localTagDefinitions.filter((d) => d.id !== id),
+        }));
+    },
+
+    reorderLocalTagDefinitions: (orderedIds) => {
+        if (!Array.isArray(orderedIds)) return;
+        set((state) => {
+            const map = new Map(state.localTagDefinitions.map((d) => [d.id, d]));
+            const next = orderedIds
+                .map((tid, idx) => {
+                    const d = map.get(tid);
+                    return d ? { ...d, order: idx } : null;
+                })
+                .filter(Boolean);
+            return { localTagDefinitions: next };
+        });
+    },
+
+    toggleTagShowInQuickBar: (id) => {
+        if (!id) return;
+        set((state) => ({
+            localTagDefinitions: state.localTagDefinitions.map((d) =>
+                d.id === id ? { ...d, showInQuickBar: !d.showInQuickBar } : d,
+            ),
+        }));
+    },
+
+    clearLocalTagDefinitions: () => set({ localTagDefinitions: [] }),
+
     addMarker: (timestamp) => {
         const id =
             typeof crypto !== "undefined" && crypto.randomUUID
                 ? crypto.randomUUID()
                 : `m-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         set((state) => ({
-            markers: [...state.markers, { id, timestamp }],
+            markers: [...state.markers, { id, timestamp, tags: [] }],
         }));
         return id;
+    },
+
+    /** Local-only tags until the segment is saved; synced in recording-experience */
+    addMarkerTag: (markerId, input) => {
+        if (!markerId) return;
+        let label;
+        let colorHex;
+        let tagDefId;
+        if (typeof input === "string") {
+            label = input.trim();
+        } else if (input && typeof input === "object") {
+            label = (input.label || "").trim();
+            colorHex = input.colorHex;
+            tagDefId = input.tagDefId;
+        }
+        if (!label) return;
+        const type = label.toLowerCase() === "ask" ? "ask" : "recheck";
+        const clientId =
+            typeof crypto !== "undefined" && crypto.randomUUID
+                ? crypto.randomUUID()
+                : `t-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        set((state) => ({
+            markers: state.markers.map((m) =>
+                m.id !== markerId
+                    ? m
+                    : {
+                          ...m,
+                          tags: [
+                              ...(m.tags || []),
+                              {
+                                  clientId,
+                                  label,
+                                  type,
+                                  ...(colorHex ? { colorHex } : {}),
+                                  ...(tagDefId ? { tagDefId } : {}),
+                              },
+                          ],
+                      },
+            ),
+        }));
     },
 
     clearMarkers: () => set({ markers: [] }),
@@ -107,6 +219,7 @@ export const useRecordingStore = create((set, get) => {
                 intervalId: timer,
                 flushInterval,
                 markers: [],
+                localTagDefinitions: [],
             });
 
         } catch (err) {
@@ -255,6 +368,7 @@ export const useRecordingStore = create((set, get) => {
             intervalId: null,
             flushInterval: null,
             markers: [],
+            localTagDefinitions: [],
         });
     },
 
