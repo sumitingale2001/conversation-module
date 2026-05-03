@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import {
   Check,
   ChevronDown,
@@ -70,6 +71,11 @@ const getTimeAgo = (dateString) => {
   return `${Math.floor(h / 24)} days ago`;
 };
 
+const INSTANT_PLACEHOLDER_SEGMENT_ID = "__instant_placeholder__";
+
+const INSTANT_LOREM =
+  "Lorem ipsum dolor sit amet consectetur. Vitae gravida sed duis consectetur pharetra dignissim sem.";
+
 const copyTextToClipboard = async (text) => {
   const value = text ?? "";
   if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
@@ -96,7 +102,8 @@ const copyTextToClipboard = async (text) => {
   }
 };
 
-const TranscriptCard = () => {
+const TranscriptCard = ({ slug }) => {
+  const router = useRouter();
   const { conversation, segments, transcript, updateSpeakerInTranscript } =
     useConversationStore();
   const { isRecording, startRecording } = useRecordingStore();
@@ -137,6 +144,8 @@ const TranscriptCard = () => {
   const [segmentMenuBusy, setSegmentMenuBusy] = useState(false);
   const [speakerNames, setSpeakerNames] = useState({});
   const [blockSpeakerOverrides, setBlockSpeakerOverrides] = useState({});
+  const [instantPlaceholderExpanded, setInstantPlaceholderExpanded] =
+    useState(true);
 
   const fileInputRef = useRef(null);
   const getConversationRef = useRef(getConversation);
@@ -145,6 +154,9 @@ const TranscriptCard = () => {
   const copySuccessTimeoutRef = useRef(null);
 
   const isProcessing = conversation?.status === "processing";
+
+  const showInstantTranscriptPlaceholder =
+    slug === "instant" && (!segments || segments.length === 0);
 
   useEffect(() => {
     getConversationRef.current = getConversation;
@@ -675,6 +687,7 @@ const TranscriptCard = () => {
   const handleSegmentMove = async (direction) => {
     const segmentId = segmentMenu.segmentId;
     closeSegmentMenu();
+    if (segmentId === INSTANT_PLACEHOLDER_SEGMENT_ID) return;
     if (!segmentId || !conversation?._id || segmentMenuMoveDisabled) return;
     setSegmentMenuBusy(true);
     try {
@@ -694,7 +707,25 @@ const TranscriptCard = () => {
   const handleSegmentDelete = async () => {
     const segmentId = segmentMenu.segmentId;
     closeSegmentMenu();
-    if (!segmentId || !conversation?._id || segmentMenuMoveDisabled) return;
+    if (!segmentId || !conversation?._id) return;
+
+    if (segmentId === INSTANT_PLACEHOLDER_SEGMENT_ID) {
+      if (segmentMenuBusy || isProcessing) return;
+      setSegmentMenuBusy(true);
+      try {
+        const res = await conversationServices.deleteConversation(
+          conversation._id,
+          { workspaceId },
+        );
+        if (!res?.success) return;
+        router.back();
+      } finally {
+        setSegmentMenuBusy(false);
+      }
+      return;
+    }
+
+    if (segmentMenuMoveDisabled) return;
     setSegmentMenuBusy(true);
     try {
       const res = await conversationServices.deleteSegment({
@@ -723,14 +754,21 @@ const TranscriptCard = () => {
   const targetMenuBlockIsActive = menuTargetBlock?.isActive !== false;
   const showRestoreInMenu = menuTargetBlock?.isEdited === true;
 
-  if (!segments || segments.length === 0) return null;
+  if (
+    !showInstantTranscriptPlaceholder &&
+    (!segments || segments.length === 0)
+  ) {
+    return null;
+  }
 
   const segmentMenuIdx =
-    segmentMenu.segmentId != null
-      ? segments.findIndex(
-          (s) => s._id.toString() === String(segmentMenu.segmentId),
-        )
-      : -1;
+    segmentMenu.segmentId === INSTANT_PLACEHOLDER_SEGMENT_ID
+      ? -1
+      : segmentMenu.segmentId != null
+        ? segments.findIndex(
+            (s) => s._id.toString() === String(segmentMenu.segmentId),
+          )
+        : -1;
   const segmentMenuIsFirst = segmentMenuIdx === 0;
   const segmentMenuIsLast =
     segmentMenuIdx >= 0 && segmentMenuIdx === segments.length - 1;
@@ -741,351 +779,439 @@ const TranscriptCard = () => {
     transcribingSegmentId !== null ||
     isProcessing;
 
+  const instantHeaderMenuDisabled =
+    segmentMenuBusy ||
+    isProcessing ||
+    isUploading ||
+    transcribingSegmentId !== null;
+
+  const disableFooterActions =
+    showInstantTranscriptPlaceholder || isActionsDisabled;
+
+  const placeholderTitle = conversation?.title?.trim() || "[Untitled]";
+  const placeholderStatusLabel = isRecording
+    ? "Recording in-progress"
+    : "Ready to record";
+
   return (
     <div className="flex flex-col gap-3 py-2 mx-auto w-full max-w-3xl">
-      {segments.map((segment, index) => {
-        const title =
-          segment.name ||
-          (index === 0 ? "[Untitled]" : `[Untitled - ${index + 1}]`);
+      {showInstantTranscriptPlaceholder && (
+        <div className="flex flex-col">
+          <div className="flex items-start gap-2 px-3 py-3">
+            <button
+              type="button"
+              onClick={() => setInstantPlaceholderExpanded((prev) => !prev)}
+              className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+            >
+              <ChevronDown
+                className={`h-4 w-4 transition-transform duration-200 ${instantPlaceholderExpanded ? "rotate-0" : "-rotate-90"}`}
+              />
+            </button>
 
-        const segmentBlocks = (transcript?.blocks || []).filter((b) => {
-          if (b.isDeleted) return false;
-          if (b.segmentId == null || b.segmentId === "") return false;
-          return b.segmentId.toString() === segment._id.toString();
-        });
-        const hasBlocks = segmentBlocks.length > 0;
-        const sectionSpeakers = Array.from(
-          new Set(
-            segmentBlocks.map((b) => b.speakerId?.toString()).filter(Boolean),
-          ),
-        )
-          .map((speakerId) => {
-            const resolved = speakerLookup[speakerId];
-            if (!resolved) return null;
-            return {
-              _id: resolved._id?.toString() || speakerId,
-              name: resolved.name || "Speaker",
-              avatarEmoji: resolved.avatarEmoji || "🎙️",
-            };
-          })
-          .filter(Boolean);
-
-        const isSegmentCompleted = hasBlocks;
-        const isThisSegmentTranscribing = transcribingSegmentId === segment._id;
-        const isDisabled =
-          (transcribingSegmentId !== null && !isThisSegmentTranscribing) ||
-          (isProcessing && !isThisSegmentTranscribing);
-        const hasError = error.segmentId === segment._id;
-
-        const statusLabel = isThisSegmentTranscribing
-          ? "Transcribing..."
-          : isSegmentCompleted
-            ? "Transcribed"
-            : segment.createdAt
-              ? `Recorded ${getTimeAgo(segment.createdAt)}`
-              : "Recording in-progress";
-
-        return (
-          <div
-            key={segment._id}
-            className={`flex flex-col rounded-lg bg-card transition-colors ${isThisSegmentTranscribing ? "opacity-80" : ""}`}
-          >
-            {/* Segment Header */}
-            <div className="flex items-start gap-2 px-3 py-3">
-              <button
-                onClick={() => toggleExpanded(segment._id)}
-                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-              >
-                <ChevronDown
-                  className={`h-4 w-4 transition-transform duration-200 ${expandedSegments[segment._id] ? "rotate-0" : "-rotate-90"}`}
-                />
-              </button>
-
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold text-foreground">
-                  {title}
-                </div>
-                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                  <span>{formatMs(segment.duration * 1000)}</span>
-                  <span>|</span>
-                  <span>{statusLabel}</span>
-                </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-[#1C1C92]">
+                {placeholderTitle}
               </div>
-
-              <div className="flex items-center gap-3">
-                {!isSegmentCompleted && (
-                  <button
-                    className={`text-sm font-medium transition-colors ${isThisSegmentTranscribing ? "text-muted-foreground cursor-default" : isDisabled ? "text-muted-foreground/40 cursor-not-allowed" : "text-primary hover:underline"}`}
-                    disabled={isThisSegmentTranscribing || isDisabled}
-                    onClick={() => onTranscribeClick(segment._id)}
-                  >
-                    {isThisSegmentTranscribing ? (
-                      <div className="flex items-center gap-1.5">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        <span>Transcribing...</span>
-                      </div>
-                    ) : (
-                      "Transcribe"
-                    )}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:pointer-events-none"
-                  disabled={segmentMenuMoveDisabled}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSegmentMenu({
-                      anchorEl: e.currentTarget,
-                      segmentId: segment._id,
-                    });
-                  }}
-                >
-                  <Image
-                    src="/three-dots.svg"
-                    alt="three-dots"
-                    width={20}
-                    height={20}
-                  />
-                </button>
+              <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                <span>{formatMs(0)}</span>
+                <span>|</span>
+                <span>{placeholderStatusLabel}</span>
               </div>
             </div>
 
-            {hasError && (
-              <div className="px-5 py-2 bg-red-50 border-red-100 flex items-center justify-between">
-                <span className="text-[11px] text-red-600 font-medium">
-                  {error.message}
-                </span>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className="text-sm font-medium text-muted-foreground/50 cursor-not-allowed pointer-events-none"
+                disabled
+              >
+                Transcribe
+              </button>
+              <button
+                type="button"
+                className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:pointer-events-none"
+                disabled={instantHeaderMenuDisabled}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSegmentMenu({
+                    anchorEl: e.currentTarget,
+                    segmentId: INSTANT_PLACEHOLDER_SEGMENT_ID,
+                  });
+                }}
+              >
+                <Image
+                  src="/three-dots.svg"
+                  alt="More options"
+                  width={20}
+                  height={20}
+                />
+              </button>
+            </div>
+          </div>
+
+          {instantPlaceholderExpanded && (
+            <div className="flex flex-col items-center px-6 pb-10 pt-2">
+              <Image
+                src="/instant-recodiing-placeholder.svg"
+                alt=""
+                width={119}
+                height={91}
+                className="h-auto w-[119px] max-w-full"
+                priority
+              />
+              <p className="mt-8 max-w-md text-center text-sm leading-relaxed text-muted-foreground">
+                {INSTANT_LOREM}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!showInstantTranscriptPlaceholder &&
+        segments.map((segment, index) => {
+          const title =
+            segment.name ||
+            (index === 0 ? "[Untitled]" : `[Untitled - ${index + 1}]`);
+
+          const segmentBlocks = (transcript?.blocks || []).filter((b) => {
+            if (b.isDeleted) return false;
+            if (b.segmentId == null || b.segmentId === "") return false;
+            return b.segmentId.toString() === segment._id.toString();
+          });
+          const hasBlocks = segmentBlocks.length > 0;
+          const sectionSpeakers = Array.from(
+            new Set(
+              segmentBlocks.map((b) => b.speakerId?.toString()).filter(Boolean),
+            ),
+          )
+            .map((speakerId) => {
+              const resolved = speakerLookup[speakerId];
+              if (!resolved) return null;
+              return {
+                _id: resolved._id?.toString() || speakerId,
+                name: resolved.name || "Speaker",
+                avatarEmoji: resolved.avatarEmoji || "🎙️",
+              };
+            })
+            .filter(Boolean);
+
+          const isSegmentCompleted = hasBlocks;
+          const isThisSegmentTranscribing =
+            transcribingSegmentId === segment._id;
+          const isDisabled =
+            (transcribingSegmentId !== null && !isThisSegmentTranscribing) ||
+            (isProcessing && !isThisSegmentTranscribing);
+          const hasError = error.segmentId === segment._id;
+
+          const statusLabel = isThisSegmentTranscribing
+            ? "Transcribing..."
+            : isSegmentCompleted
+              ? "Transcribed"
+              : segment.createdAt
+                ? `Recorded ${getTimeAgo(segment.createdAt)}`
+                : "Recording in-progress";
+
+          return (
+            <div
+              key={segment._id}
+              className={`flex flex-col rounded-lg bg-card transition-colors ${isThisSegmentTranscribing ? "opacity-80" : ""}`}
+            >
+              {/* Segment Header */}
+              <div className="flex items-start gap-2 px-3 py-3">
                 <button
-                  onClick={() => onTranscribeClick(segment._id)}
-                  className="text-[11px] text-red-700 font-bold hover:underline"
+                  onClick={() => toggleExpanded(segment._id)}
+                  className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
                 >
-                  Retry
+                  <ChevronDown
+                    className={`h-4 w-4 transition-transform duration-200 ${expandedSegments[segment._id] ? "rotate-0" : "-rotate-90"}`}
+                  />
                 </button>
-              </div>
-            )}
 
-            {/* Expanded Body */}
-            {expandedSegments[segment._id] && (
-              <div className="pb-3">
-                {isThisSegmentTranscribing ? (
-                  <div className="px-5 py-12 flex flex-col items-center justify-center">
-                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-yellow-400 mb-4">
-                      <Loader2 className="h-8 w-8 text-white animate-spin" />
-                    </div>
-                    <p className="text-center text-xs text-gray-500">
-                      Processing your recording...
-                    </p>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-foreground">
+                    {title}
                   </div>
-                ) : hasBlocks ? (
-                  /* Speaker-grouped blocks */
-                  <div className="flex flex-col">
-                    {segmentBlocks.map((block) => {
-                      const blockIsEdited = block.isEdited === true;
-                      const blockActive = block.isActive !== false;
-                      const effectiveSpeakerId =
-                        blockSpeakerOverrides[block._id.toString()] ||
-                        block.speakerId?.toString() ||
-                        null;
-                      const speaker = effectiveSpeakerId
-                        ? speakerLookup[effectiveSpeakerId]
-                        : null;
-                      const speakerKey =
-                        effectiveSpeakerId ||
-                        `unassigned-${block._id.toString()}`;
-                      const isManualBlock = block?.isManual === true;
-                      const blockStartMs = getBlockStartMs(block);
-                      const tags = (block.tagIds || [])
-                        .map(
-                          (tagId) =>
-                            transcriptTagLookup[tagId?.toString?.() || tagId],
-                        )
-                        .filter(Boolean);
+                  <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                    <span>{formatMs(segment.duration * 1000)}</span>
+                    <span>|</span>
+                    <span>{statusLabel}</span>
+                  </div>
+                </div>
 
-                      return (
-                        <div
-                          key={block._id}
-                          className={`flex gap-3 px-3 py-3 rounded-lg transition-colors group hover:bg-[#ECECED] ${!blockActive ? "opacity-50" : ""} ${blockIsEdited ? "bg-muted/50" : ""}`}
-                          data-block-disabled={!blockActive || undefined}
-                          data-block-edited={blockIsEdited || undefined}
-                        >
-                          {/* Timestamp or manual-block indicator */}
-                          <div className="shrink-0 w-12 flex items-start justify-end pt-0.5">
-                            {!isManualBlock ? (
-                              <span className="text-[11px] font-mono text-muted-foreground">
-                                {formatMs(blockStartMs ?? 0)}
-                              </span>
-                            ) : (
-                              <Image
-                                src="/logout-arrow.svg"
-                                alt="manual-block"
-                                width={16}
-                                height={16}
-                              />
-                            )}
-                          </div>
+                <div className="flex items-center gap-3">
+                  {!isSegmentCompleted && (
+                    <button
+                      className={`text-sm font-medium transition-colors ${isThisSegmentTranscribing ? "text-muted-foreground cursor-default" : isDisabled ? "text-muted-foreground/40 cursor-not-allowed" : "text-primary hover:underline"}`}
+                      disabled={isThisSegmentTranscribing || isDisabled}
+                      onClick={() => onTranscribeClick(segment._id)}
+                    >
+                      {isThisSegmentTranscribing ? (
+                        <div className="flex items-center gap-1.5">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          <span>Transcribing...</span>
+                        </div>
+                      ) : (
+                        "Transcribe"
+                      )}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:pointer-events-none"
+                    disabled={segmentMenuMoveDisabled}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSegmentMenu({
+                        anchorEl: e.currentTarget,
+                        segmentId: segment._id,
+                      });
+                    }}
+                  >
+                    <Image
+                      src="/three-dots.svg"
+                      alt="three-dots"
+                      width={20}
+                      height={20}
+                    />
+                  </button>
+                </div>
+              </div>
 
-                          {/* Speaker avatar + content */}
-                          <div className="flex flex-col gap-1.5 flex-1 min-w-0">
-                            {/* Speaker row */}
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2 min-w-0">
-                                {/* Emoji avatar */}
-                                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-sm">
-                                  {speaker?.avatarEmoji || "😀"}
-                                </div>
+              {hasError && (
+                <div className="px-5 py-2 bg-red-50 border-red-100 flex items-center justify-between">
+                  <span className="text-[11px] text-red-600 font-medium">
+                    {error.message}
+                  </span>
+                  <button
+                    onClick={() => onTranscribeClick(segment._id)}
+                    className="text-[11px] text-red-700 font-bold hover:underline"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
 
-                                <SpeakerLabel
-                                  speaker={speaker}
-                                  sectionSpeakers={sectionSpeakers}
-                                  transcriptId={transcript?._id}
-                                  workspaceId={workspaceId}
-                                  blockId={block._id}
-                                  onSaved={handleSpeakerSaved}
-                                  disabled={isProcessing || !blockActive}
+              {/* Expanded Body */}
+              {expandedSegments[segment._id] && (
+                <div className="pb-3">
+                  {isThisSegmentTranscribing ? (
+                    <div className="px-5 py-12 flex flex-col items-center justify-center">
+                      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-yellow-400 mb-4">
+                        <Loader2 className="h-8 w-8 text-white animate-spin" />
+                      </div>
+                      <p className="text-center text-xs text-gray-500">
+                        Processing your recording...
+                      </p>
+                    </div>
+                  ) : hasBlocks ? (
+                    /* Speaker-grouped blocks */
+                    <div className="flex flex-col">
+                      {segmentBlocks.map((block) => {
+                        const blockIsEdited = block.isEdited === true;
+                        const blockActive = block.isActive !== false;
+                        const effectiveSpeakerId =
+                          blockSpeakerOverrides[block._id.toString()] ||
+                          block.speakerId?.toString() ||
+                          null;
+                        const speaker = effectiveSpeakerId
+                          ? speakerLookup[effectiveSpeakerId]
+                          : null;
+                        const speakerKey =
+                          effectiveSpeakerId ||
+                          `unassigned-${block._id.toString()}`;
+                        const isManualBlock = block?.isManual === true;
+                        const blockStartMs = getBlockStartMs(block);
+                        const tags = (block.tagIds || [])
+                          .map(
+                            (tagId) =>
+                              transcriptTagLookup[tagId?.toString?.() || tagId],
+                          )
+                          .filter(Boolean);
+
+                        return (
+                          <div
+                            key={block._id}
+                            className={`flex gap-3 px-3 py-3 rounded-lg transition-colors group hover:bg-[#ECECED] ${!blockActive ? "opacity-50" : ""} ${blockIsEdited ? "bg-muted/50" : ""}`}
+                            data-block-disabled={!blockActive || undefined}
+                            data-block-edited={blockIsEdited || undefined}
+                          >
+                            {/* Timestamp or manual-block indicator */}
+                            <div className="shrink-0 w-12 flex items-start justify-end pt-0.5">
+                              {!isManualBlock ? (
+                                <span className="text-[11px] font-mono text-muted-foreground">
+                                  {formatMs(blockStartMs ?? 0)}
+                                </span>
+                              ) : (
+                                <Image
+                                  src="/logout-arrow.svg"
+                                  alt="manual-block"
+                                  width={16}
+                                  height={16}
                                 />
-
-                                {!blockActive && (
-                                  <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground shrink-0">
-                                    Disabled
-                                  </span>
-                                )}
-
-                                {tags.map((tagItem) => (
-                                  <span
-                                    key={tagItem.id}
-                                    className={`inline-flex h-6 items-center rounded-full px-2 text-xs ${
-                                      tagItem.type === "ask"
-                                        ? "bg-[#FFF2D8] border border-[#F1B84A] text-[#B87400]"
-                                        : "bg-[#EAF1FF] border border-[#5E8BFF] text-[#2F68FF]"
-                                    }`}
-                                  >
-                                    {tagItem.label}
-                                  </span>
-                                ))}
-                              </div>
-
-                              <div
-                                className={`flex items-center gap-2 transition-opacity ${
-                                  copiedBlockId === block._id.toString()
-                                    ? "opacity-100"
-                                    : "opacity-0 group-hover:opacity-100"
-                                }`}
-                              >
-                                {!isManualBlock && (
-                                  <button
-                                    type="button"
-                                    disabled={!blockActive}
-                                    onClick={() => handlePlayBlock(block)}
-                                    className="h-7 w-7 rounded-full bg-[#1C1C92] text-white flex items-center justify-center cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
-                                  >
-                                    <Play size={14} fill="currentColor" />
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  disabled={isProcessing}
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    void handleCopyBlockText(
-                                      block._id.toString(),
-                                      block.text,
-                                    );
-                                  }}
-                                  className="h-7 w-7 cursor-pointer rounded border border-[#D0D0D0] text-[#6A6A6A] flex items-center justify-center bg-white disabled:opacity-40 disabled:pointer-events-none"
-                                  aria-label={
-                                    copiedBlockId === block._id.toString()
-                                      ? "Copied"
-                                      : "Copy"
-                                  }
-                                >
-                                  {copiedBlockId === block._id.toString() ? (
-                                    <Check
-                                      size={14}
-                                      className="text-green-600"
-                                      strokeWidth={2.5}
-                                    />
-                                  ) : (
-                                    <Copy size={14} />
-                                  )}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={(event) =>
-                                    handleOpenMenu(event, {
-                                      blockId: block._id.toString(),
-                                      speakerKey,
-                                      blockTime: !isManualBlock
-                                        ? formatMs(blockStartMs ?? 0)
-                                        : "—",
-                                    })
-                                  }
-                                  className="h-7 w-7 cursor-pointer rounded-full text-[#666] flex items-center justify-center hover:bg-[#EFEFEF]"
-                                >
-                                  <Image
-                                    src="/three-dots.svg"
-                                    alt="More options"
-                                    width={20}
-                                    height={20}
-                                  />
-                                </button>
-                              </div>
+                              )}
                             </div>
 
-                            {blockEditError.blockId ===
-                              block._id.toString() && (
-                              <p className="pl-8 text-[11px] text-red-600">
-                                {blockEditError.message}
-                              </p>
-                            )}
-                            <TranscriptBlockTextEditor
-                              text={block.text}
-                              disabled={isProcessing || !blockActive}
-                              saving={savingBlockId === block._id.toString()}
-                              autoStartEditing={
-                                blockToFocusId === block._id.toString()
-                              }
-                              emptyPlaceholder="[Add text here]"
-                              onCommit={async (payload) => {
-                                if (payload?.empty) {
-                                  setBlockEditError({
-                                    blockId: block._id.toString(),
-                                    message: "Text cannot be empty",
-                                  });
-                                  return false;
+                            {/* Speaker avatar + content */}
+                            <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+                              {/* Speaker row */}
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  {/* Emoji avatar */}
+                                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-sm">
+                                    {speaker?.avatarEmoji || "😀"}
+                                  </div>
+
+                                  <SpeakerLabel
+                                    speaker={speaker}
+                                    sectionSpeakers={sectionSpeakers}
+                                    transcriptId={transcript?._id}
+                                    workspaceId={workspaceId}
+                                    blockId={block._id}
+                                    onSaved={handleSpeakerSaved}
+                                    disabled={isProcessing || !blockActive}
+                                  />
+
+                                  {!blockActive && (
+                                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground shrink-0">
+                                      Disabled
+                                    </span>
+                                  )}
+
+                                  {tags.map((tagItem) => (
+                                    <span
+                                      key={tagItem.id}
+                                      className={`inline-flex h-6 items-center rounded-full px-2 text-xs ${
+                                        tagItem.type === "ask"
+                                          ? "bg-[#FFF2D8] border border-[#F1B84A] text-[#B87400]"
+                                          : "bg-[#EAF1FF] border border-[#5E8BFF] text-[#2F68FF]"
+                                      }`}
+                                    >
+                                      {tagItem.label}
+                                    </span>
+                                  ))}
+                                </div>
+
+                                <div
+                                  className={`flex items-center gap-2 transition-opacity ${
+                                    copiedBlockId === block._id.toString()
+                                      ? "opacity-100"
+                                      : "opacity-0 group-hover:opacity-100"
+                                  }`}
+                                >
+                                  {!isManualBlock && (
+                                    <button
+                                      type="button"
+                                      disabled={!blockActive}
+                                      onClick={() => handlePlayBlock(block)}
+                                      className="h-7 w-7 rounded-full bg-[#1C1C92] text-white flex items-center justify-center cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
+                                    >
+                                      <Play size={14} fill="currentColor" />
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    disabled={isProcessing}
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      void handleCopyBlockText(
+                                        block._id.toString(),
+                                        block.text,
+                                      );
+                                    }}
+                                    className="h-7 w-7 cursor-pointer rounded border border-[#D0D0D0] text-[#6A6A6A] flex items-center justify-center bg-white disabled:opacity-40 disabled:pointer-events-none"
+                                    aria-label={
+                                      copiedBlockId === block._id.toString()
+                                        ? "Copied"
+                                        : "Copy"
+                                    }
+                                  >
+                                    {copiedBlockId === block._id.toString() ? (
+                                      <Check
+                                        size={14}
+                                        className="text-green-600"
+                                        strokeWidth={2.5}
+                                      />
+                                    ) : (
+                                      <Copy size={14} />
+                                    )}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(event) =>
+                                      handleOpenMenu(event, {
+                                        blockId: block._id.toString(),
+                                        speakerKey,
+                                        blockTime: !isManualBlock
+                                          ? formatMs(blockStartMs ?? 0)
+                                          : "—",
+                                      })
+                                    }
+                                    className="h-7 w-7 cursor-pointer rounded-full text-[#666] flex items-center justify-center hover:bg-[#EFEFEF]"
+                                  >
+                                    <Image
+                                      src="/three-dots.svg"
+                                      alt="More options"
+                                      width={20}
+                                      height={20}
+                                    />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {blockEditError.blockId ===
+                                block._id.toString() && (
+                                <p className="pl-8 text-[11px] text-red-600">
+                                  {blockEditError.message}
+                                </p>
+                              )}
+                              <TranscriptBlockTextEditor
+                                text={block.text}
+                                disabled={isProcessing || !blockActive}
+                                saving={savingBlockId === block._id.toString()}
+                                autoStartEditing={
+                                  blockToFocusId === block._id.toString()
                                 }
-                                return patchTranscriptBlock(block, {
-                                  text: payload.text,
-                                });
-                              }}
-                            />
+                                emptyPlaceholder="[Add text here]"
+                                onCommit={async (payload) => {
+                                  if (payload?.empty) {
+                                    setBlockEditError({
+                                      blockId: block._id.toString(),
+                                      message: "Text cannot be empty",
+                                    });
+                                    return false;
+                                  }
+                                  return patchTranscriptBlock(block, {
+                                    text: payload.text,
+                                  });
+                                }}
+                              />
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center px-6 py-12">
-                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 mb-4">
-                      <FileText className="h-8 w-8 text-gray-400" />
+                        );
+                      })}
                     </div>
-                    <p className="text-center text-xs text-gray-500">
-                      Transcript will appear here once you click Transcribe.
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
+                  ) : (
+                    <div className="flex flex-col items-center justify-center px-6 py-12">
+                      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 mb-4">
+                        <FileText className="h-8 w-8 text-gray-400" />
+                      </div>
+                      <p className="text-center text-xs text-gray-500">
+                        Transcript will appear here once you click Transcribe.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
 
       {/* Action Buttons */}
       <div className="flex flex-col gap-2 pt-3">
         <div className="flex items-center gap-6 px-1">
           <button
-            disabled={isActionsDisabled}
+            disabled={disableFooterActions}
             onClick={() => {
               if (!isRecording) startRecording();
             }}
@@ -1095,7 +1221,7 @@ const TranscriptCard = () => {
             Add recording
           </button>
           <button
-            disabled={isActionsDisabled}
+            disabled={disableFooterActions}
             onClick={() => fileInputRef.current?.click()}
             className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none transition-colors"
           >
@@ -1142,6 +1268,9 @@ const TranscriptCard = () => {
         isFirst={segmentMenuIsFirst}
         isLast={segmentMenuIsLast}
         moveDisabled={segmentMenuMoveDisabled}
+        onlyDeleteEnabled={
+          segmentMenu.segmentId === INSTANT_PLACEHOLDER_SEGMENT_ID
+        }
         onMoveUp={() => handleSegmentMove("up")}
         onMoveDown={() => handleSegmentMove("down")}
         onAppendRecording={handleSegmentAppendRecording}

@@ -15,7 +15,7 @@ const ViewModeController = ({ slug, id }) => {
     const conversation = useConversationStore((state) => state.conversation);
     const segments = useConversationStore((state) => state.segments);
     const { getConversation } = useGetConversation();
-    
+
     const hasFetched = useRef(false);
     const hasTransitionedToSplit = useRef(false);
 
@@ -30,8 +30,7 @@ const ViewModeController = ({ slug, id }) => {
         }
     }, []);
 
-    // (a) Sets initial viewMode based on slug.
-    // (b) Dependencies: [slug, setViewMode] - Re-runs if slug changes.
+    // Non-instant routes: default to split (summary + transcript).
     useEffect(() => {
         if (slug !== "instant") {
             hasTransitionedToSplit.current = true;
@@ -39,9 +38,23 @@ const ViewModeController = ({ slug, id }) => {
         }
     }, [slug, setViewMode]);
 
-    // (a) Handles transitions from "left" to "split" based on status and content.
-    // (b) Dependencies: [conversation?.status, segments?.length, setViewMode]
+    // Instant recording: no saved segments → full-width transcript/record ("left");
+    // after at least one segment exists (post-save) → "split".
     useEffect(() => {
+        if (slug !== "instant") return;
+
+        const hasSegments = (segments?.length ?? 0) > 0;
+        if (hasSegments) {
+            hasTransitionedToSplit.current = true;
+            setViewMode("split");
+        } else {
+            setViewMode("left");
+        }
+    }, [slug, segments?.length, setViewMode]);
+
+    // Non-instant only: status-driven left/split (unchanged for upload / other flows).
+    useEffect(() => {
+        if (slug === "instant") return;
         if (!conversation?.status) return;
 
         const hasSegments = segments?.length > 0;
@@ -54,11 +67,10 @@ const ViewModeController = ({ slug, id }) => {
             hasTransitionedToSplit.current = true;
             setViewMode("split");
         } else if (conversation.status === "processing") {
-            // Guard: Never revert to "left" if we've already transitioned to "split" once.
             if (hasTransitionedToSplit.current) return;
             setViewMode("left");
         }
-    }, [conversation?.status, segments?.length, setViewMode]);
+    }, [slug, conversation?.status, segments?.length, setViewMode]);
 
     return null;
 };

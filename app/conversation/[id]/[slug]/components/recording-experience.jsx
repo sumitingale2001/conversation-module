@@ -185,7 +185,7 @@ const RecordingExperience = ({ slug }) => {
             
 
             <main className="flex-1 overflow-y-auto px-6 py-6" style={{ minHeight: '300px' }}>
-                <TranscriptCard />
+                <TranscriptCard slug={slug} />
             </main>
 
             <div className="px-6 pb-6">

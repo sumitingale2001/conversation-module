@@ -482,9 +482,14 @@ export const SegmentMainActionsMenu = ({
   onMoveDown,
   onAppendRecording,
   onDelete,
+  /** When true, only Delete is interactive (e.g. instant recording placeholder state). */
+  onlyDeleteEnabled = false,
 }) => {
   const itemClass =
     "w-full flex items-center gap-2 px-3 py-2 text-sm text-[#3A3A3A] hover:bg-gray-50 cursor-pointer text-left";
+
+  const moveAppendDisabled = onlyDeleteEnabled || moveDisabled;
+  const deleteDisabled = onlyDeleteEnabled ? false : moveDisabled;
 
   return (
     <Popover
@@ -507,7 +512,7 @@ export const SegmentMainActionsMenu = ({
       <div className="min-w-[180px] py-1">
         <button
           type="button"
-          disabled={isFirst || moveDisabled}
+          disabled={onlyDeleteEnabled || isFirst || moveDisabled}
           className={`${itemClass} disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none`}
           onClick={() => onMoveUp?.()}
         >
@@ -516,7 +521,7 @@ export const SegmentMainActionsMenu = ({
         </button>
         <button
           type="button"
-          disabled={isLast || moveDisabled}
+          disabled={onlyDeleteEnabled || isLast || moveDisabled}
           className={`${itemClass} disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none`}
           onClick={() => onMoveDown?.()}
         >
@@ -525,7 +530,7 @@ export const SegmentMainActionsMenu = ({
         </button>
         <button
           type="button"
-          disabled={moveDisabled}
+          disabled={moveAppendDisabled}
           className={`${itemClass} disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none`}
           onClick={() => onAppendRecording?.()}
         >
@@ -534,7 +539,7 @@ export const SegmentMainActionsMenu = ({
         </button>
         <button
           type="button"
-          disabled={moveDisabled}
+          disabled={deleteDisabled}
           className={`${itemClass} disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none`}
           onClick={() => onDelete?.()}
         >
