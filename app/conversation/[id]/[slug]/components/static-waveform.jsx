@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { GripVertical, Mic, Trash2, Send } from 'lucide-react';
+import { Diamond, GripVertical, Mic, Trash2, Send } from 'lucide-react';
 import useConversationStore from '../../../../../store/conversation.store';
 import { useRecordingStore } from '../../../../../store/recording.store';
 import { conversationServices } from '../../../../../services/conversationServices';
@@ -41,9 +41,8 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
     const audioContextRef = useRef(null);
     const isPausedRef = useRef(false);
     const durationRef = useRef(0);
-
     const { conversation, segments } = useConversationStore();
-    const { duration, title, isPaused } = useRecordingStore();
+    const { duration, title, isPaused, isRecording, markers } = useRecordingStore();
     const { getConversation } = useGetConversation();
 
     const [activePopover, setActivePopover] = useState(null);
@@ -282,6 +281,8 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
                     drawBar(x, y, barW, barH, BAR_FILL);
                 }
             }
+
+            /* Bookmark marker lines: DOM overlays (aligned with chip + diamonds). */
         };
 
         draw();
@@ -421,16 +422,51 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
     return (
         <div className="relative w-full select-none">
             {/* ── OUTER WAVEFORM CONTAINER ─────────────────────────────────── */}
-            <div className="relative h-24 w-full overflow-hidden rounded-lg border border-gray-200 bg-[#F3F4F6] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
+            <div className="relative h-24 w-full rounded-lg border border-gray-200 bg-[#F3F4F6] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
                 
                 {/* Fixed center line — recording grows left from here (instant / live) */}
                 <div className="pointer-events-none absolute inset-y-0 left-1/2 z-30 w-px -translate-x-1/2 bg-red-500/85 shadow-[0_0_6px_rgba(239,68,68,0.45)]" />
+
+                {/* Green markers: same horizontal math as live chip (left edge → playhead at center). */}
+                {isLive &&
+                    duration > 0 &&
+                    markers.map((m) => {
+                        const t = Math.min(Math.max(0, m.timestamp / duration), 1);
+                        const p =
+                            (50 - chipWidthPct) / 100 +
+                            t * (chipWidthPct / 100);
+                        const left = `calc(8px + (100% - 16px) * ${p})`;
+                        return (
+                            <React.Fragment key={m.id}>
+                                <div
+                                    className="pointer-events-none absolute inset-y-0 z-[36] w-0.5 bg-green-500"
+                                    style={{
+                                        left,
+                                        transform: 'translateX(-50%)',
+                                    }}
+                                />
+                                <div
+                                    className="pointer-events-none absolute top-1 z-[45]"
+                                    style={{
+                                        left,
+                                        transform: 'translateX(-50%)',
+                                    }}
+                                >
+                                    <Diamond className="h-3.5 w-3.5 fill-green-500 text-green-500 drop-shadow-[0_1px_1px_rgba(0,0,0,0.12)]" strokeWidth={2} />
+                                </div>
+                            </React.Fragment>
+                        );
+                    })}
 
                 {isLive ? (
                     /* ── STATE 2: chip right edge at center playhead, width grows toward the left ── */
                     <div className="pointer-events-none absolute inset-y-2 left-2 right-2 z-10">
                         <div
-                            className="absolute inset-y-0 overflow-hidden rounded-l-lg rounded-r-none border border-[#C6C6C7] border-r-0 bg-[#E3E3E4] shadow-sm pointer-events-auto"
+                            className={`absolute inset-y-0 overflow-hidden rounded-l-lg rounded-r-none border border-[#C6C6C7] border-r-0 bg-[#E3E3E4] shadow-sm pointer-events-auto ${
+                                isRecording && isPaused
+                                    ? 'cursor-grab active:cursor-grabbing'
+                                    : ''
+                            }`}
                             style={{
                                 left: `calc(50% - ${chipWidthPct}%)`,
                                 width: `${chipWidthPct}%`,
@@ -438,7 +474,9 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
                         >
                             <div className="absolute left-0 right-0 top-0 z-20">
                                 <div className="relative flex items-center gap-1.5 border-b border-[#8E9092] bg-[#A1A3A5] px-3 pb-1.5 pt-2">
-                                    <GripVertical className="h-3 w-3 shrink-0 text-[#262626]" />
+                                    <GripVertical
+                                        className={`h-3 w-3 shrink-0 text-[#262626] ${isRecording && isPaused ? 'cursor-grab' : ''}`}
+                                    />
                                     <button
                                         type="button"
                                         className="shrink-0 cursor-pointer border-0 bg-transparent p-0 text-inherit"
@@ -514,6 +552,32 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
                                     flex: `${seg.duration || 1} 1 0%`,
                                 }}
                             >
+                                {markers
+                                    .filter((m) => {
+                                        const st = Number(seg.startTime) || 0;
+                                        const en =
+                                            seg.endTime != null && seg.endTime !== ''
+                                                ? Number(seg.endTime)
+                                                : st + (Number(seg.duration) || 0);
+                                        return (
+                                            m.timestamp >= st && m.timestamp <= en
+                                        );
+                                    })
+                                    .map((m) => {
+                                        const st = Number(seg.startTime) || 0;
+                                        const dur = Number(seg.duration) || 1;
+                                        const pct =
+                                            dur > 0
+                                                ? ((m.timestamp - st) / dur) * 100
+                                                : 0;
+                                        return (
+                                            <div
+                                                key={m.id}
+                                                className="pointer-events-none absolute inset-y-0 z-30 w-0.5 bg-green-500"
+                                                style={{ left: `${pct}%` }}
+                                            />
+                                        );
+                                    })}
                                 {/* Chip header */}
                                 <div className="relative flex shrink-0 items-center gap-1.5 border-b border-[#8E9092] bg-[#A1A3A5] px-2.5 pb-1 pt-2 z-10">
                                     <GripVertical className="h-3 w-3 text-[#262626]" />

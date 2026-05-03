@@ -135,6 +135,37 @@ export const conversationServices = {
     return this.replaceSegment(payload);
   },
 
+  /** Scrib+Replace live range (POST /conversations/replace) */
+  async replaceRecordingRange({
+    conversationId,
+    workspaceId,
+    fileUrl,
+    startTime,
+    endTime,
+  }) {
+    if (!conversationId || !workspaceId || !fileUrl) return null;
+    return await request(
+      apiInstance.post("/conversations/replace", {
+        conversationId,
+        workspaceId,
+        fileUrl,
+        startTime: roundVal(startTime),
+        endTime: roundVal(endTime),
+      }),
+    );
+  },
+
+  async createTagInstance({ conversationId, workspaceId, timestamp }) {
+    if (!conversationId || !workspaceId) return null;
+    return await request(
+      apiInstance.post("/tags", {
+        conversationId,
+        workspaceId,
+        timestamp: roundVal(timestamp),
+      }),
+    );
+  },
+
   async reorderSegments(payload) {
     if (!payload.conversationId || !payload.workspaceId || !payload.segmentIds)
       return null;

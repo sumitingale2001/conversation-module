@@ -20,7 +20,14 @@ import { workspaceId } from '../../../../../utils/conversation.utils';
 const RecordingExperience = ({ slug }) => {
     const router = useRouter();
     const { conversation, setConversation, segments } = useConversationStore();
-    const { stopRecording, reset, startRecording, duration, audioChunks, isRecording,    } = useRecordingStore();
+    const {
+        stopRecording,
+        reset,
+        startRecording,
+        duration,
+        audioChunks,
+        clearMarkers,
+    } = useRecordingStore();
     const { getConversation } = useGetConversation();
 
     const [isProcessingLocal, setIsProcessingLocal] = useState(false);
@@ -37,10 +44,30 @@ const RecordingExperience = ({ slug }) => {
 
     const [error, setError] = useState(false);
     const [pendingSegmentName, setPendingSegmentName] = useState('');
+    const handleDiamondClick = async () => {
+        const rs = useRecordingStore.getState();
+        if (!rs.isRecording) return;
+        const timestamp = rs.duration;
+        rs.addMarker(timestamp);
+        if (!rs.isPaused) {
+            rs.pauseRecording();
+        }
+        if (!conversation?._id) return;
+        try {
+            await conversationServices.createTagInstance({
+                conversationId: conversation._id,
+                workspaceId,
+                timestamp,
+            });
+        } catch (e) {
+            console.error(e);
+        }
+    };
 
     const handleRestartConfirm = async () => {
         reset();
         setPendingSegmentName('');
+        useRecordingStore.getState().clearMarkers();
         if (slug === 'instant' && conversation?._id) {
             try {
                 await conversationServices.deleteConversation(conversation._id, {
@@ -211,6 +238,7 @@ const RecordingExperience = ({ slug }) => {
                     handleConfirm={handleConfirm}
                     pendingName={pendingSegmentName}
                     onPendingNameChange={setPendingSegmentName}
+                    handleDiamondClick={handleDiamondClick}
                 />
             </div>
         </div>

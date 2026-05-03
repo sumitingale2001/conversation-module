@@ -67,6 +67,22 @@ export const useRecordingStore = create((set, get) => {
     intervalId: null,
     flushInterval: null,
 
+    /** Bookmarks (waveform markers + tag instances) */
+    markers: [],
+
+    addMarker: (timestamp) => {
+        const id =
+            typeof crypto !== "undefined" && crypto.randomUUID
+                ? crypto.randomUUID()
+                : `m-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        set((state) => ({
+            markers: [...state.markers, { id, timestamp }],
+        }));
+        return id;
+    },
+
+    clearMarkers: () => set({ markers: [] }),
+
     // ✅ START RECORDING
     startRecording: async () => {
         if (get().isRecording) return;
@@ -89,7 +105,8 @@ export const useRecordingStore = create((set, get) => {
                 isPaused: false,
                 duration: 0,
                 intervalId: timer,
-                flushInterval
+                flushInterval,
+                markers: [],
             });
 
         } catch (err) {
@@ -236,7 +253,8 @@ export const useRecordingStore = create((set, get) => {
             isPaused: false,
             duration: 0,
             intervalId: null,
-            flushInterval: null
+            flushInterval: null,
+            markers: [],
         });
     },
 

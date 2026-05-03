@@ -35,12 +35,14 @@ const RecordingPanel = ({
   handleConfirm,
   pendingName,
   onPendingNameChange,
+  handleDiamondClick,
 }) => {
   const { conversation } = useConversationStore();
   const {
     isPaused,
     isRecording,
     duration,
+    markers,
     availableDevices,
     selectedDeviceId,
     devicePermissionDenied,
@@ -182,7 +184,7 @@ const RecordingPanel = ({
       </div>
 
       <div className="px-5 pb-2">
-        <div className="relative overflow-hidden rounded-lg">
+        <div className="relative rounded-lg">
           <StaticWaveform
             mediaStream={mediaStream}
             pendingName={pendingName}
@@ -225,10 +227,20 @@ const RecordingPanel = ({
           </button>
         </div>
         <button
-          className="text-blue-600 disabled:opacity-50"
-          disabled={isProcessing}
+          type="button"
+          className={`${
+            markers.length > 0
+              ? "text-green-500 disabled:opacity-50"
+              : "text-blue-600 disabled:opacity-50"
+          } ${isRecording && isPaused ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"}`}
+          disabled={isProcessing || !isRecording}
+          title="Add bookmark and pause recording"
+          onClick={() => void handleDiamondClick?.()}
         >
-          <Diamond className="text-blue-600 h-5 w-5" strokeWidth={1.75} />
+          <Diamond
+            className={`h-5 w-5 ${markers.length > 0 ? "fill-green-500 text-green-500" : "text-blue-600"}`}
+            strokeWidth={1.75}
+          />
         </button>
       </div>
 
@@ -272,13 +284,25 @@ const RecordingPanel = ({
             )}
           </div>
         </div>
-        <button
-          onClick={handlePauseToggle}
-          disabled={isProcessing}
-          className={`rounded-md px-8 py-1.5 text-sm font-medium disabled:opacity-50 transition-colors ${isPaused ? "bg-[#1C1C92] text-white" : "border border-gray-300 text-gray-900 hover:bg-gray-50"}`}
-        >
-          {isProcessing ? "Processing..." : isPaused ? "Resume" : "Pause"}
-        </button>
+        <div className="flex flex-1 items-center justify-center">
+          <button
+            type="button"
+            onClick={() => {
+              if (isProcessing) return;
+              handlePauseToggle();
+            }}
+            disabled={isProcessing}
+            className={`rounded-md px-8 py-1.5 text-sm font-medium disabled:opacity-50 transition-colors ${
+              isProcessing
+                ? "border border-gray-200 text-gray-500"
+                : isPaused
+                  ? "bg-[#1C1C92] text-white"
+                  : "border border-gray-300 text-gray-900 hover:bg-gray-50"
+            }`}
+          >
+            {isProcessing ? "Processing..." : isPaused ? "Resume" : "Pause"}
+          </button>
+        </div>
         <span className="w-12" />
       </div>
 
