@@ -421,7 +421,7 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
     return (
         <div className="relative w-full select-none">
             {/* ── OUTER WAVEFORM CONTAINER ─────────────────────────────────── */}
-            <div className="relative h-24 w-full overflow-visible rounded-lg border border-gray-200 bg-[#F3F4F6] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
+            <div className="relative h-24 w-full overflow-hidden rounded-lg border border-gray-200 bg-[#F3F4F6] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
                 
                 {/* Fixed center line — recording grows left from here (instant / live) */}
                 <div className="pointer-events-none absolute inset-y-0 left-1/2 z-30 w-px -translate-x-1/2 bg-red-500/85 shadow-[0_0_6px_rgba(239,68,68,0.45)]" />
@@ -430,7 +430,7 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
                     /* ── STATE 2: chip right edge at center playhead, width grows toward the left ── */
                     <div className="pointer-events-none absolute inset-y-2 left-2 right-2 z-10">
                         <div
-                            className="absolute inset-y-0 overflow-visible rounded-l-lg rounded-r-none border border-[#C6C6C7] border-r-0 bg-[#E3E3E4] shadow-sm pointer-events-auto"
+                            className="absolute inset-y-0 overflow-hidden rounded-l-lg rounded-r-none border border-[#C6C6C7] border-r-0 bg-[#E3E3E4] shadow-sm pointer-events-auto"
                             style={{
                                 left: `calc(50% - ${chipWidthPct}%)`,
                                 width: `${chipWidthPct}%`,
@@ -501,7 +501,7 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
                                 onDrop={(e) => handleDrop(e, index)}
                                 onDragEnd={handleDragEnd}
                                 className={`
-                                    relative flex min-w-[140px] cursor-grab select-none flex-col overflow-visible rounded-lg border
+                                    relative flex min-w-[140px] cursor-grab select-none flex-col overflow-hidden rounded-lg border
                                     border-[#C6C6C7] bg-[#E3E3E4] shadow-sm
                                     transition-all duration-150 active:cursor-grabbing
                                     ${dragOverIndex === index && dragIndex !== index

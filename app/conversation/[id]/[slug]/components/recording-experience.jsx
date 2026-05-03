@@ -6,6 +6,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Undo2, Redo2 } from 'lucide-react';
 import useConversationStore from '../../../../../store/conversation.store';
 import { useRecordingStore } from '../../../../../store/recording.store';
@@ -17,6 +18,7 @@ import RecordingPanel from './recording-panel';
 import { workspaceId } from '../../../../../utils/conversation.utils';
 
 const RecordingExperience = ({ slug }) => {
+    const router = useRouter();
     const { conversation, setConversation, segments } = useConversationStore();
     const { stopRecording, reset, startRecording, duration, audioChunks, isRecording,    } = useRecordingStore();
     const { getConversation } = useGetConversation();
@@ -36,8 +38,19 @@ const RecordingExperience = ({ slug }) => {
     const [error, setError] = useState(false);
     const [pendingSegmentName, setPendingSegmentName] = useState('');
 
-    const handleReset = () => {
+    const handleRestartConfirm = async () => {
         reset();
+        setPendingSegmentName('');
+        if (slug === 'instant' && conversation?._id) {
+            try {
+                await conversationServices.deleteConversation(conversation._id, {
+                    workspaceId,
+                });
+            } catch (e) {
+                console.warn('Restart: failed to delete conversation', e);
+            }
+            router.back();
+        }
     };
     
     // Auto-start guard: waits for conversation to load before checking segments.
@@ -185,12 +198,16 @@ const RecordingExperience = ({ slug }) => {
             
 
             <main className="flex-1 overflow-y-auto px-6 py-6" style={{ minHeight: '300px' }}>
-                <TranscriptCard slug={slug} />
+                <TranscriptCard
+                    slug={slug}
+                    pendingSegmentName={pendingSegmentName}
+                />
             </main>
 
             <div className="px-6 pb-6">
                 <RecordingPanel 
-                    handleReset={handleReset}
+                    slug={slug}
+                    onRestartConfirm={handleRestartConfirm}
                     handleConfirm={handleConfirm}
                     pendingName={pendingSegmentName}
                     onPendingNameChange={setPendingSegmentName}

@@ -102,7 +102,7 @@ const copyTextToClipboard = async (text) => {
   }
 };
 
-const TranscriptCard = ({ slug }) => {
+const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
   const router = useRouter();
   const { conversation, segments, transcript, updateSpeakerInTranscript } =
     useConversationStore();
@@ -785,10 +785,13 @@ const TranscriptCard = ({ slug }) => {
     isUploading ||
     transcribingSegmentId !== null;
 
-  const disableFooterActions =
-    showInstantTranscriptPlaceholder || isActionsDisabled;
+  const disableFooterActions = isActionsDisabled;
 
-  const placeholderTitle = conversation?.title?.trim() || "[Untitled]";
+  /** In-progress segment label only — not conversation title (header remains conversation-scoped). */
+  const placeholderTitle =
+    (typeof pendingSegmentName === "string" && pendingSegmentName.trim()
+      ? pendingSegmentName.trim()
+      : null) || "[Untitled]";
   const placeholderStatusLabel = isRecording
     ? "Recording in-progress"
     : "Ready to record";
@@ -1207,52 +1210,54 @@ const TranscriptCard = ({ slug }) => {
           );
         })}
 
-      {/* Action Buttons */}
-      <div className="flex flex-col gap-2 pt-3">
-        <div className="flex items-center gap-6 px-1">
-          <button
-            disabled={disableFooterActions}
-            onClick={() => {
-              if (!isRecording) startRecording();
-            }}
-            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none transition-colors"
-          >
-            <img src="/mic.svg" className="h-4 w-4" alt="mic" />
-            Add recording
-          </button>
-          <button
-            disabled={disableFooterActions}
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none transition-colors"
-          >
-            {isUploading ? (
-              <>
-                <Loader2 className="animate-spin h-3.5 w-3.5" />
-                <span>Uploading...</span>
-              </>
-            ) : (
-              <>
-                <img src="/upload-media.png" className="h-4 w-4" alt="upload" />
-                Add source
-              </>
-            )}
-          </button>
-        </div>
-
-        {uploadError && (
-          <div className="px-5 py-2 bg-red-50 border border-red-100 rounded-lg flex items-center justify-between mt-2">
-            <span className="text-[11px] text-red-600 font-medium">
-              {uploadError}
-            </span>
+      {/* Action Buttons — hidden during instant flow with no saved segments (use recording panel). */}
+      {!showInstantTranscriptPlaceholder && (
+        <div className="flex flex-col gap-2 pt-3">
+          <div className="flex items-center gap-6 px-1">
             <button
-              onClick={() => fileInputRef.current?.click()}
-              className="text-[11px] text-red-700 font-bold hover:underline"
+              disabled={disableFooterActions}
+              onClick={() => {
+                if (!isRecording) startRecording();
+              }}
+              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none transition-colors"
             >
-              Retry
+              <img src="/mic.svg" className="h-4 w-4" alt="mic" />
+              Add recording
+            </button>
+            <button
+              disabled={disableFooterActions}
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none transition-colors"
+            >
+              {isUploading ? (
+                <>
+                  <Loader2 className="animate-spin h-3.5 w-3.5" />
+                  <span>Uploading...</span>
+                </>
+              ) : (
+                <>
+                  <img src="/upload-media.png" className="h-4 w-4" alt="upload" />
+                  Add source
+                </>
+              )}
             </button>
           </div>
-        )}
-      </div>
+
+          {uploadError && (
+            <div className="px-5 py-2 bg-red-50 border border-red-100 rounded-lg flex items-center justify-between mt-2">
+              <span className="text-[11px] text-red-600 font-medium">
+                {uploadError}
+              </span>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="text-[11px] text-red-700 font-bold hover:underline"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       <input
         type="file"

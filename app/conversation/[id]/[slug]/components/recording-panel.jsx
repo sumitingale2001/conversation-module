@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Check,
   ChevronDown,
@@ -29,7 +30,8 @@ const formatTimer = (seconds) => {
 };
 
 const RecordingPanel = ({
-  handleReset,
+  slug,
+  onRestartConfirm,
   handleConfirm,
   pendingName,
   onPendingNameChange,
@@ -51,6 +53,7 @@ const RecordingPanel = ({
     mediaStream,
   } = useRecordingStore();
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
+  const [restartDialogOpen, setRestartDialogOpen] = useState(false);
   const popoverContainerRef = useRef(null);
 
   const isProcessing = conversation?.status === "processing";
@@ -118,6 +121,20 @@ const RecordingPanel = ({
     }
   }, [isMicSelectorDisabled, isPopoverOpen]);
 
+  useEffect(() => {
+    if (!restartDialogOpen) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") setRestartDialogOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [restartDialogOpen]);
+
+  const handleRestartDialogConfirm = async () => {
+    setRestartDialogOpen(false);
+    await onRestartConfirm?.();
+  };
+
   const getDeviceLabel = (device, index) => {
     if (device.deviceId === "default") return "Default - Input source";
     if (device.label?.trim()) return device.label;
@@ -146,8 +163,10 @@ const RecordingPanel = ({
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={handleReset}
+            type="button"
+            onClick={() => setRestartDialogOpen(true)}
             disabled={isProcessing}
+            aria-label="Restart conversation"
             className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-900 disabled:opacity-50 cursor-pointer"
           >
             <RefreshCw className="h-4 w-4" />
@@ -163,7 +182,7 @@ const RecordingPanel = ({
       </div>
 
       <div className="px-5 pb-2">
-        <div className="relative overflow-visible rounded-lg">
+        <div className="relative overflow-hidden rounded-lg">
           <StaticWaveform
             mediaStream={mediaStream}
             pendingName={pendingName}
@@ -262,6 +281,65 @@ const RecordingPanel = ({
         </button>
         <span className="w-12" />
       </div>
+
+      {restartDialogOpen &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-[10000] flex items-start justify-center px-4 pt-[63px] opacity-100">
+            <div
+              className="absolute inset-0 bg-black/40"
+              aria-hidden
+              onClick={() => setRestartDialogOpen(false)}
+            />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="restart-conversation-title"
+              className="relative z-10 flex min-h-[178px] w-[370px] max-w-full flex-col gap-6 rounded-[8px] border border-gray-200 bg-white p-[15px] shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex flex-col gap-2">
+                <h2
+                  id="restart-conversation-title"
+                  className="text-base font-bold leading-snug text-gray-900"
+                >
+                  Are you sure you wish to restart this conversation?
+                </h2>
+                <p className="text-sm leading-relaxed text-gray-500">
+                  {slug === "instant" ? (
+                    <>
+                      Confirming will permanently delete the conversation and
+                      start the recording from scratch. This action cannot be
+                      undone.
+                    </>
+                  ) : (
+                    <>
+                      This will discard the current recording session and clear
+                      the timer. Unsaved audio will be lost.
+                    </>
+                  )}
+                </p>
+              </div>
+              <div className="flex w-full gap-3">
+                <button
+                  type="button"
+                  onClick={() => setRestartDialogOpen(false)}
+                  className="flex-1 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm transition-colors hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleRestartDialogConfirm()}
+                  className="flex-1 rounded-lg bg-[#1C1C92] px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#16166e]"
+                >
+                  Confirm
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 };
