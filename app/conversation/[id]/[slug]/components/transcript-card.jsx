@@ -107,6 +107,9 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
   const router = useRouter();
   const { conversation, segments, transcript, updateSpeakerInTranscript } =
     useConversationStore();
+  const playbackBlockId = useConversationStore((s) => s.playbackBlockId);
+  const playbackSegmentId = useConversationStore((s) => s.playbackSegmentId);
+  const isPlaybackPlaying = useConversationStore((s) => s.isPlaying);
   const { isRecording, startRecording } = useRecordingStore();
   const { getConversation } = useGetConversation();
 
@@ -153,6 +156,7 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
   const audioPlayerRef = useRef(null);
   const stopPlaybackTimerRef = useRef(null);
   const copySuccessTimeoutRef = useRef(null);
+  const prevConvPlaybackRef = useRef(false);
 
   const isProcessing = conversation?.status === "processing";
 
@@ -193,6 +197,43 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
   const toggleExpanded = (segmentId) => {
     setExpandedSegments((prev) => ({ ...prev, [segmentId]: !prev[segmentId] }));
   };
+
+  useEffect(() => {
+    if (!isPlaybackPlaying) {
+      prevConvPlaybackRef.current = false;
+      return;
+    }
+    const started = !prevConvPlaybackRef.current;
+    prevConvPlaybackRef.current = true;
+    if (!started) return;
+    setExpandedSegments((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      (segments || []).forEach((seg) => {
+        const hasBlocks = (transcript?.blocks || []).some(
+          (b) =>
+            b &&
+            !b.isDeleted &&
+            b.segmentId != null &&
+            b.segmentId !== "" &&
+            b.segmentId.toString() === seg._id.toString(),
+        );
+        if (hasBlocks && next[seg._id] !== true) {
+          next[seg._id] = true;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [isPlaybackPlaying, segments, transcript?.blocks]);
+
+  useEffect(() => {
+    if (!isPlaybackPlaying || !playbackSegmentId) return;
+    setExpandedSegments((prev) => {
+      if (prev[playbackSegmentId]) return prev;
+      return { ...prev, [playbackSegmentId]: true };
+    });
+  }, [isPlaybackPlaying, playbackSegmentId]);
 
   // Build speaker lookup: speakerId string → speaker object
   const speakerLookup = useMemo(() => {
@@ -916,13 +957,19 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
                 ? `Recorded ${getTimeAgo(segment.createdAt)}`
                 : "Recording in-progress";
 
+          const isPlaybackSegmentActive =
+            Boolean(playbackSegmentId) &&
+            String(playbackSegmentId) === String(segment._id);
+          const segmentAccordionOpen = Boolean(expandedSegments[segment._id]);
+
           return (
             <div
               key={segment._id}
-              className={`flex flex-col rounded-lg bg-card transition-colors ${isThisSegmentTranscribing ? "opacity-80" : ""}`}
+              className={`flex flex-col rounded-lg bg-card ${isThisSegmentTranscribing ? "opacity-80" : ""}`}
             >
-              {/* Segment Header */}
-              <div className="flex items-start gap-2 px-3 py-3">
+              <div
+                className={`flex items-start gap-2 px-3 py-3 transition-colors hover:bg-[#ECECED] ${segmentAccordionOpen ? "rounded-t-lg" : "rounded-lg"}`}
+              >
                 <button
                   onClick={() => toggleExpanded(segment._id)}
                   className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
@@ -1012,6 +1059,10 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
                     /* Speaker-grouped blocks */
                     <div className="flex flex-col">
                       {segmentBlocks.map((block) => {
+                        const isCurrentPlaybackBlock =
+                          Boolean(playbackBlockId) &&
+                          String(playbackBlockId) ===
+                            String(block._id.toString());
                         const blockIsEdited = block.isEdited === true;
                         const blockActive = block.isActive !== false;
                         const effectiveSpeakerId =
@@ -1036,7 +1087,15 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
                         return (
                           <div
                             key={block._id}
-                            className={`flex gap-3 px-3 py-3 rounded-lg transition-colors group hover:bg-[#ECECED] ${!blockActive ? "opacity-50" : ""} ${blockIsEdited ? "bg-muted/50" : ""}`}
+                            className={`flex gap-3 px-3 py-3 rounded-lg transition-colors group ${!blockActive ? "opacity-50" : ""} ${
+                              isCurrentPlaybackBlock
+                                ? "bg-[#ECECED]"
+                                : isPlaybackSegmentActive
+                                  ? "bg-[#ECECED]/50 hover:bg-[#ECECED]/70"
+                                  : blockIsEdited
+                                    ? "bg-muted/50"
+                                    : "hover:bg-[#ECECED]"
+                            }`}
                             data-block-disabled={!blockActive || undefined}
                             data-block-edited={blockIsEdited || undefined}
                           >

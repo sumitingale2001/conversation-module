@@ -44,6 +44,8 @@ const useConversationStore = create((set, get) => ({
     currentTime: 0,
     duration: 0,
     playbackRate: 1,
+    playbackSegmentId: null,
+    playbackBlockId: null,
 
     // --- 5. ACTIONS ---
 
@@ -56,13 +58,25 @@ const useConversationStore = create((set, get) => ({
         const segments = data?.segments || [];
         const tags = data?.tags || [];
         const transcript = data?.transcript || null;
+        const prevId = get().conversation?._id?.toString();
+        const newId = conversation?._id?.toString();
+        const switchedConversation =
+            Boolean(prevId && newId && prevId !== newId);
 
         set({
             conversation,
             segments,
             tags,
             transcript,
-            mappedSegments: mapTagsToSegments(segments, tags)
+            mappedSegments: mapTagsToSegments(segments, tags),
+            ...(switchedConversation
+                ? {
+                      isPlaying: false,
+                      currentTime: 0,
+                      playbackSegmentId: null,
+                      playbackBlockId: null,
+                  }
+                : {}),
         });
     },
 

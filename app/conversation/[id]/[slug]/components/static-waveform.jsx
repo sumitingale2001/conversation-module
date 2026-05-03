@@ -43,6 +43,8 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
     const isPausedRef = useRef(false);
     const durationRef = useRef(0);
     const { conversation, segments } = useConversationStore();
+    const playbackCurrentTime = useConversationStore((s) => s.currentTime);
+    const playbackSegmentId = useConversationStore((s) => s.playbackSegmentId);
     const { duration, title, isPaused, isRecording, markers, localTagDefinitions } =
         useRecordingStore();
     const { getConversation } = useGetConversation();
@@ -79,6 +81,10 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
 
     const isLive = !!(mediaStream && mediaStream.getAudioTracks().length > 0);
     const totalDuration = conversation?.totalDuration || 0;
+    const playbackHeadPct =
+        totalDuration > 0
+            ? Math.min(100, Math.max(0, (playbackCurrentTime / totalDuration) * 100))
+            : 0;
     const ticks = generateTicks(totalDuration);
 
     // Sync ordered segments from store
@@ -468,8 +474,21 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
             {/* ── OUTER WAVEFORM CONTAINER ─────────────────────────────────── */}
             <div className="relative h-24 w-full rounded-lg border border-gray-200 bg-[#F3F4F6] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
                 
-                {/* Fixed center line — recording grows left from here (instant / live) */}
-                <div className="pointer-events-none absolute inset-y-0 left-1/2 z-30 w-px -translate-x-1/2 bg-red-500/85 shadow-[0_0_6px_rgba(239,68,68,0.45)]" />
+                {/* Fixed center line — live recording only */}
+                {isLive && (
+                    <div className="pointer-events-none absolute inset-y-0 left-1/2 z-30 w-px -translate-x-1/2 bg-red-500/85 shadow-[0_0_6px_rgba(239,68,68,0.45)]" />
+                )}
+
+                {/* Completed timeline playback head */}
+                {!isLive && totalDuration > 0 && orderedSegments.length > 0 && (
+                    <div
+                        className="pointer-events-none absolute inset-y-0 z-[35] w-px bg-red-500/90 shadow-[0_0_6px_rgba(239,68,68,0.45)]"
+                        style={{
+                            left: `calc(8px + (100% - 16px) * ${playbackHeadPct / 100})`,
+                            transform: 'translateX(-50%)',
+                        }}
+                    />
+                )}
 
                 {/* Green markers: same horizontal math as live chip (left edge → playhead at center). */}
                 {isLive &&
@@ -599,8 +618,12 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
                                 onDragEnd={handleDragEnd}
                                 className={`
                                     relative flex min-w-[140px] cursor-grab select-none flex-col overflow-hidden rounded-lg border
-                                    border-[#C6C6C7] bg-[#E3E3E4] shadow-sm
+                                    border-[#C6C6C7] shadow-sm
                                     transition-all duration-150 active:cursor-grabbing
+                                    ${playbackSegmentId && String(playbackSegmentId) === String(seg._id)
+                                        ? 'z-[25] bg-[#ECECED]'
+                                        : 'bg-[#E3E3E4] hover:bg-[#ECECED]'
+                                    }
                                     ${dragOverIndex === index && dragIndex !== index
                                         ? 'z-20 scale-[1.01] border-primary ring-2 ring-primary/20'
                                         : ''
