@@ -7,15 +7,20 @@
 'use client';
 
 import RecordingExperience from "./recording-experience";
-import TranscriptCard from "./transcript-card";
 import useConversationStore from "../../../../../store/conversation.store";
+import { ConversationRouteSkeleton } from "../../../../../components/skeletons";
 import { Redo2, Undo2 } from "lucide-react";
 
 const ConversationContent = ({ slug }) => {
     const viewMode = useConversationStore((state) => state.viewMode);
+    const isLoading = useConversationStore((state) => state.isLoading);
     const conversation = useConversationStore((state) => state.conversation);
 
     const isProcessing = conversation?.status === "processing";
+
+    if (isLoading) {
+        return <ConversationRouteSkeleton viewMode={viewMode} />;
+    }
 
     return (
         <div className="w-full h-full flex overflow-hidden">
