@@ -73,6 +73,7 @@ const useConversationStore = create((set, get) => ({
                 ? {
                       isPlaying: false,
                       currentTime: 0,
+                      playbackRate: 1,
                       playbackSegmentId: null,
                       playbackBlockId: null,
                   }

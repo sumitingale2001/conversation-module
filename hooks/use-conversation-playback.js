@@ -84,8 +84,6 @@ export function useConversationPlayback() {
 
   const setPlaybackState = useConversationStore((s) => s.setPlaybackState);
   const conversation = useConversationStore((s) => s.conversation);
-  const segments = useConversationStore((s) => s.segments);
-  const transcript = useConversationStore((s) => s.transcript);
   const isPlaying = useConversationStore((s) => s.isPlaying);
   const currentTime = useConversationStore((s) => s.currentTime);
   const playbackRate =
@@ -117,46 +115,58 @@ export function useConversationPlayback() {
 
   const loadAudioAtGlobalTime = useCallback(
     (globalSec, andPlay) => {
-      const state = useConversationStore.getState();
-      const segs = sortedSegments(state.segments);
-      const seg = findSegmentAtGlobalTime(segs, globalSec);
-      const total = Number(state.conversation?.totalDuration) || 0;
-      const clamped = Math.max(0, Math.min(globalSec, total));
-      if (!seg?.fileUrl || !audioRef.current) {
-        pushPlaybackUi(clamped);
-        return;
-      }
-      const st = Number(seg.startTime) || 0;
-      const offset = Math.max(0, clamped - st);
-      const a = audioRef.current;
-      const segKey = seg._id?.toString();
-
-      a.playbackRate = playbackRate;
-
-      const startPlayback = () => {
-        a.currentTime = offset;
-        pushPlaybackUi(st + offset, { segmentId: segKey });
-        if (andPlay) {
-          a.play().catch(() => {});
-          setPlaybackState({ isPlaying: true });
+      return new Promise((resolve) => {
+        const state = useConversationStore.getState();
+        const rate = state.playbackRate || 1;
+        const segs = sortedSegments(state.segments);
+        const seg = findSegmentAtGlobalTime(segs, globalSec);
+        const total = Number(state.conversation?.totalDuration) || 0;
+        const clamped = Math.max(0, Math.min(globalSec, total));
+        if (!seg?.fileUrl || !audioRef.current) {
+          pushPlaybackUi(clamped);
+          resolve();
+          return;
         }
-      };
+        const st = Number(seg.startTime) || 0;
+        const offset = Math.max(0, clamped - st);
+        const a = audioRef.current;
+        const segKey = seg._id?.toString();
 
-      if (loadedSegmentIdRef.current !== segKey) {
-        loadedSegmentIdRef.current = segKey;
-        a.pause();
-        a.src = seg.fileUrl;
-        a.load();
-        const onReady = () => {
-          a.removeEventListener("loadedmetadata", onReady);
-          startPlayback();
+        a.playbackRate = rate;
+
+        const startPlayback = () => {
+          a.currentTime = offset;
+          pushPlaybackUi(st + offset, { segmentId: segKey });
+          if (andPlay) {
+            a.play().catch(() => {});
+            setPlaybackState({ isPlaying: true });
+          }
+          resolve();
         };
-        a.addEventListener("loadedmetadata", onReady, { once: true });
-      } else {
-        startPlayback();
-      }
+
+        if (loadedSegmentIdRef.current !== segKey) {
+          loadedSegmentIdRef.current = segKey;
+          a.pause();
+          a.src = seg.fileUrl;
+          a.load();
+          const onReady = () => {
+            a.removeEventListener("loadedmetadata", onReady);
+            a.removeEventListener("error", onErr);
+            startPlayback();
+          };
+          const onErr = () => {
+            a.removeEventListener("loadedmetadata", onReady);
+            a.removeEventListener("error", onErr);
+            resolve();
+          };
+          a.addEventListener("loadedmetadata", onReady, { once: true });
+          a.addEventListener("error", onErr, { once: true });
+        } else {
+          startPlayback();
+        }
+      });
     },
-    [playbackRate, pushPlaybackUi, setPlaybackState],
+    [pushPlaybackUi, setPlaybackState],
   );
 
   useEffect(() => {
@@ -256,11 +266,12 @@ export function useConversationPlayback() {
       const total = Number(state.conversation?.totalDuration) || 0;
       const next = Math.max(0, Math.min((state.currentTime || 0) + deltaSec, total));
       const wasPlaying = state.isPlaying;
-      loadAudioAtGlobalTime(next, wasPlaying);
-      if (!wasPlaying) {
-        audioRef.current?.pause();
-        setPlaybackState({ isPlaying: false });
-      }
+      void loadAudioAtGlobalTime(next, wasPlaying).then(() => {
+        if (!wasPlaying) {
+          audioRef.current?.pause();
+          setPlaybackState({ isPlaying: false });
+        }
+      });
     },
     [loadAudioAtGlobalTime, setPlaybackState],
   );

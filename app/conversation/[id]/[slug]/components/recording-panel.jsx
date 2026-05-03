@@ -43,6 +43,8 @@ const RecordingPanel = ({
   const timelineSegments = useConversationStore((s) => s.segments);
   const convPlaybackTime = useConversationStore((s) => s.currentTime);
   const convIsPlaying = useConversationStore((s) => s.isPlaying);
+  const playbackRate = useConversationStore((s) => s.playbackRate) ?? 1;
+  const setPlaybackState = useConversationStore((s) => s.setPlaybackState);
   const {
     isPaused,
     isRecording,
@@ -62,8 +64,10 @@ const RecordingPanel = ({
   const { togglePlayPause, skipBack, skipForward, stopPlayback } =
     useConversationPlayback();
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
+  const [speedPopoverOpen, setSpeedPopoverOpen] = useState(false);
   const [restartDialogOpen, setRestartDialogOpen] = useState(false);
   const popoverContainerRef = useRef(null);
+  const speedPopoverRef = useRef(null);
 
   const isProcessing = conversation?.status === "processing";
   const isMicSelectorDisabled =
@@ -71,6 +75,11 @@ const RecordingPanel = ({
 
   /** Recording: live timer. Idle: total length until playback moves the head (then show position). */
   const totalDur = Number(conversation?.totalDuration) || 0;
+  const playbackControlsDisabled =
+    isProcessing ||
+    isRecording ||
+    totalDur <= 0 ||
+    !timelineSegments?.some?.((s) => s.fileUrl);
   const displaySeconds = isRecording
     ? duration
     : convIsPlaying || convPlaybackTime > 0
@@ -137,6 +146,27 @@ const RecordingPanel = ({
   }, [isPopoverOpen]);
 
   useEffect(() => {
+    if (!speedPopoverOpen) return;
+
+    const handleOutsideClick = (event) => {
+      if (!speedPopoverRef.current?.contains(event.target)) {
+        setSpeedPopoverOpen(false);
+      }
+    };
+
+    const handleEscape = (event) => {
+      if (event.key === "Escape") setSpeedPopoverOpen(false);
+    };
+
+    document.addEventListener("mousedown", handleOutsideClick);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [speedPopoverOpen]);
+
+  useEffect(() => {
     if (isMicSelectorDisabled && isPopoverOpen) {
       setIsPopoverOpen(false);
     }
@@ -179,6 +209,14 @@ const RecordingPanel = ({
   useEffect(() => {
     if (!isRecording) setIsPopoverOpen(false);
   }, [isRecording]);
+
+  useEffect(() => {
+    if (isRecording) setSpeedPopoverOpen(false);
+  }, [isRecording]);
+
+  useEffect(() => {
+    if (playbackControlsDisabled) setSpeedPopoverOpen(false);
+  }, [playbackControlsDisabled]);
 
   return (
     <div className="mx-auto w-full max-w-3xl rounded-xl bg-white shadow-md ring-1 ring-gray-200">
@@ -226,17 +264,51 @@ const RecordingPanel = ({
       <div
         className={`flex items-center justify-between px-5 pt-1 ${isRecording ? "pb-2" : "pb-5"}`}
       >
-        <button
-          className="flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs font-medium text-gray-900 disabled:opacity-50"
-          disabled={isProcessing}
-        >
-          1x <ChevronDown className="h-3 w-3" />
-        </button>
+        <div className="relative justify-self-start" ref={speedPopoverRef}>
+          <button
+            type="button"
+            className="flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs font-medium text-gray-900 disabled:opacity-50 cursor-pointer"
+            disabled={playbackControlsDisabled}
+            aria-expanded={speedPopoverOpen}
+            aria-label="Playback speed"
+            onClick={() => setSpeedPopoverOpen((o) => !o)}
+          >
+            {playbackRate >= 2 ? "2x" : "1x"}{" "}
+            <ChevronDown
+              className={`h-3 w-3 transition-transform ${speedPopoverOpen ? "rotate-180" : ""}`}
+            />
+          </button>
+          <div
+            className={`absolute bottom-full left-0 z-50 mb-2 min-w-[88px] rounded-lg border border-gray-200 bg-white py-1 shadow-lg transition-all duration-150 ${
+              speedPopoverOpen && !playbackControlsDisabled
+                ? "pointer-events-auto translate-y-0 opacity-100"
+                : "pointer-events-none translate-y-1 opacity-0"
+            }`}
+          >
+            {[1, 2].map((rate) => (
+              <button
+                key={rate}
+                type="button"
+                className={`flex w-full items-center px-3 py-2 text-left text-xs font-medium transition-colors hover:bg-gray-100 cursor-pointer ${
+                  Math.abs(playbackRate - rate) < 0.01
+                    ? "bg-[#EFEEFC] font-semibold text-[#1C1C92]"
+                    : "text-gray-900"
+                }`}
+                onClick={() => {
+                  setPlaybackState({ playbackRate: rate });
+                  setSpeedPopoverOpen(false);
+                }}
+              >
+                {rate}x
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="flex items-center gap-3">
           <button
             type="button"
-            className="relative text-gray-500 disabled:opacity-50"
-            disabled={isProcessing || isRecording}
+            className="relative text-gray-500 disabled:opacity-50 cursor-pointer"
+            disabled={playbackControlsDisabled}
             onClick={() => skipBack()}
             aria-label="Back 5 seconds"
           >
@@ -252,12 +324,7 @@ const RecordingPanel = ({
                 ? "bg-[#1C1C92] text-white"
                 : "border border-gray-300 text-gray-600"
             }`}
-            disabled={
-              isProcessing ||
-              isRecording ||
-              totalDur <= 0 ||
-              !timelineSegments?.some?.((s) => s.fileUrl)
-            }
+            disabled={playbackControlsDisabled}
             onClick={() => togglePlayPause()}
             aria-label={
               !isRecording && convIsPlaying ? "Pause playback" : "Play"
@@ -271,8 +338,8 @@ const RecordingPanel = ({
           </button>
           <button
             type="button"
-            className="relative text-gray-500 disabled:opacity-50"
-            disabled={isProcessing || isRecording}
+            className="relative text-gray-500 disabled:opacity-50 cursor-pointer"
+            disabled={playbackControlsDisabled}
             onClick={() => skipForward()}
             aria-label="Forward 5 seconds"
           >
