@@ -439,7 +439,18 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
                             <div className="absolute left-0 right-0 top-0 z-20">
                                 <div className="relative flex items-center gap-1.5 border-b border-[#8E9092] bg-[#A1A3A5] px-3 pb-1.5 pt-2">
                                     <GripVertical className="h-3 w-3 shrink-0 text-[#262626]" />
-                                    <Mic className="h-3 w-3 shrink-0 text-[#262626]" />
+                                    <button
+                                        type="button"
+                                        className="shrink-0 cursor-pointer border-0 bg-transparent p-0 text-inherit"
+                                        aria-label="Rename segment"
+                                        onMouseDown={(e) => e.stopPropagation()}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            openPopover('live', pendingName || title || '[Untitled]', e.currentTarget);
+                                        }}
+                                    >
+                                        <Mic className="h-3 w-3 text-[#262626]" />
+                                    </button>
                                     <span
                                         role="button"
                                         tabIndex={0}
@@ -506,7 +517,18 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
                                 {/* Chip header */}
                                 <div className="relative flex shrink-0 items-center gap-1.5 border-b border-[#8E9092] bg-[#A1A3A5] px-2.5 pb-1 pt-2 z-10">
                                     <GripVertical className="h-3 w-3 text-[#262626]" />
-                                    <Mic className="h-3 w-3 text-[#262626]" />
+                                    <button
+                                        type="button"
+                                        className="shrink-0 cursor-pointer border-0 bg-transparent p-0 text-inherit"
+                                        aria-label="Rename segment"
+                                        onMouseDown={(e) => e.stopPropagation()}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            openPopover(seg._id, seg.name || `Recording ${index + 1}`, e.currentTarget);
+                                        }}
+                                    >
+                                        <Mic className="h-3 w-3 text-[#262626]" />
+                                    </button>
                                     <span
                                         role="button"
                                         tabIndex={0}
