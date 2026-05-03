@@ -155,15 +155,32 @@ export const conversationServices = {
     );
   },
 
-  async createTagInstance({ conversationId, workspaceId, timestamp }) {
-    if (!conversationId || !workspaceId) return null;
-    return await request(
-      apiInstance.post("/tags", {
-        conversationId,
-        workspaceId,
-        timestamp: roundVal(timestamp),
-      }),
+  /**
+   * Resolve or create a workspace user tag by name (POST /tags/create-tag).
+   * Required before PUT /transcript/block/add-tag (global tagId).
+   */
+  async ensureUserTagByName(userId, name) {
+    const normalized = (name || "").trim();
+    if (!normalized || !userId) return null;
+
+    let allTags = [];
+    const allTagsRes = await this.getAllTags(userId);
+    if (allTagsRes?.success !== false) {
+      allTags = allTagsRes?.data?.tags || [];
+    }
+
+    let selected = allTags.find(
+      (tag) =>
+        tag?.name?.trim?.()?.toLowerCase() === normalized.toLowerCase(),
     );
+    if (!selected) {
+      const createRes = await this.createTag({
+        userId,
+        name: normalized,
+      });
+      selected = createRes?.data?.tag || null;
+    }
+    return selected;
   },
 
   async reorderSegments(payload) {
@@ -246,21 +263,6 @@ export const conversationServices = {
   },
 
   // --- TAG APIs ---
-  async attachTag(payload) {
-    if (
-      !payload.conversationId ||
-      !payload.tagId ||
-      payload.timestamp === undefined
-    )
-      return null;
-
-    const sanitized = {
-      ...payload,
-      timestamp: roundVal(payload.timestamp),
-    };
-
-    return await request(apiInstance.post("/timeline/tags/attach", sanitized));
-  },
 
   async updateTag(payload) {
     if (!payload.tagInstanceId || payload.timestamp === undefined) return null;

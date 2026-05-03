@@ -647,7 +647,7 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
                                         onMouseDown={(e) => e.stopPropagation()}
                                         onClick={(e) => {
                                             e.stopPropagation();
-                                            openPopover(seg._id, seg.name || `Recording ${index + 1}`, e.currentTarget);
+                                            openPopover(seg._id, seg.name || '[Untitled]', e.currentTarget);
                                         }}
                                     >
                                         <Mic className="h-3 w-3 text-[#262626]" />
@@ -659,16 +659,16 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
                                         onMouseDown={(e) => e.stopPropagation()}
                                         onClick={(e) => {
                                             e.stopPropagation();
-                                            openPopover(seg._id, seg.name || `Recording ${index + 1}`, e.currentTarget);
+                                            openPopover(seg._id, seg.name || '[Untitled]', e.currentTarget);
                                         }}
                                         onKeyDown={(e) => {
                                             if (e.key === 'Enter' || e.key === ' ') {
                                                 e.preventDefault();
-                                                openPopover(seg._id, seg.name || `Recording ${index + 1}`, e.currentTarget);
+                                                openPopover(seg._id, seg.name || '[Untitled]', e.currentTarget);
                                             }
                                         }}
                                     >
-                                        {seg.name || `Recording ${index + 1}`}
+                                        {seg.name || '[Untitled]'}
                                     </span>
                                     <div className="flex-1" />
                                     <span className="font-mono text-[10px] text-[#262626]">

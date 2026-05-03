@@ -70,6 +70,12 @@ export const useRecordingStore = create((set, get) => {
     /** Bookmarks (waveform markers + tag instances) */
     markers: [],
 
+    /**
+     * When PUT /transcript/block/add-tag cannot run yet (no blocks / transcript not completed),
+     * markers JSON is stored here until transcribe completes — keyed by recording segment id.
+     */
+    pendingBookmarkSyncBySegment: {},
+
     /** Local tag catalog during recording (Manage Tags); persisted on segment save */
     localTagDefinitions: [],
 
@@ -194,6 +200,25 @@ export const useRecordingStore = create((set, get) => {
     },
 
     clearMarkers: () => set({ markers: [] }),
+
+    setPendingBookmarkSync: (segmentId, markers) => {
+        if (!segmentId || !markers?.length) return;
+        set((state) => ({
+            pendingBookmarkSyncBySegment: {
+                ...state.pendingBookmarkSyncBySegment,
+                [segmentId]: markers,
+            },
+        }));
+    },
+
+    clearPendingBookmarkSync: (segmentId) => {
+        if (!segmentId) return;
+        set((state) => {
+            const next = { ...state.pendingBookmarkSyncBySegment };
+            delete next[segmentId];
+            return { pendingBookmarkSyncBySegment: next };
+        });
+    },
 
     // ✅ START RECORDING
     startRecording: async () => {

@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import useConversationStore from "../../../../../store/conversation.store";
 import { conversationServices } from "../../../../../services/conversationServices";
+import { flushPendingBookmarkSyncForSegment } from "../../../../../services/bookmark-transcript-sync";
 import { workspaceId, userId } from "../../../../../utils/conversation.utils";
 import apiInstance from "../../../../../config/apiInstance";
 import useGetConversation from "../../../../../hooks/use-get-conversation";
@@ -457,21 +458,10 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
     const normalized = (raw || "").trim();
     if (!normalized || !tagPopoverState.blockId || !transcript?._id) return;
 
-    const allTagsRes = await conversationServices.getAllTags(userId);
-    const allTags = allTagsRes?.data?.tags || [];
-
-    let selectedTag =
-      allTags.find(
-        (tag) => tag?.name?.trim().toLowerCase() === normalized.toLowerCase(),
-      ) || null;
-
-    if (!selectedTag) {
-      const createRes = await conversationServices.createTag({
-        userId,
-        name: normalized,
-      });
-      selectedTag = createRes?.data?.tag || null;
-    }
+    const selectedTag = await conversationServices.ensureUserTagByName(
+      userId,
+      normalized,
+    );
 
     if (!selectedTag?._id) return;
 
@@ -591,6 +581,19 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
         });
         return;
       }
+
+      await getConversationRef.current({
+        conversationId: conversation?._id,
+        workspaceId,
+        silent: true,
+      });
+
+      await flushPendingBookmarkSyncForSegment({
+        segmentId,
+        conversationId: conversation?._id,
+        workspaceId,
+        userId,
+      });
 
       await getConversationRef.current({
         conversationId: conversation?._id,
@@ -873,9 +876,7 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
 
       {!showInstantTranscriptPlaceholder &&
         segments.map((segment, index) => {
-          const title =
-            segment.name ||
-            (index === 0 ? "[Untitled]" : `[Untitled - ${index + 1}]`);
+          const title = segment.name || "[Untitled]";
 
           const segmentBlocks = (transcript?.blocks || []).filter((b) => {
             if (b.isDeleted) return false;

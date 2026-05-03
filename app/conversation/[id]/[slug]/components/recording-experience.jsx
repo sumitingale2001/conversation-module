@@ -13,56 +13,19 @@ import { useRecordingStore } from '../../../../../store/recording.store';
 import useGetConversation from '../../../../../hooks/use-get-conversation';
 import apiInstance from '../../../../../config/apiInstance';
 import { conversationServices, roundVal } from '../../../../../services/conversationServices';
+import {
+    syncBookmarksToTranscriptBlocks,
+    setPendingBookmarkSync,
+} from '../../../../../services/bookmark-transcript-sync';
 import TranscriptCard from './transcript-card';
 import RecordingPanel from './recording-panel';
 import { userId, workspaceId } from '../../../../../utils/conversation.utils';
 
-async function syncRecordingMarkersToTimeline(markers, conversationId) {
-    if (!conversationId || !workspaceId || !userId) return;
-    const withTags = (markers || []).filter((m) => (m.tags?.length ?? 0) > 0);
-    if (withTags.length === 0) return;
-
-    let allTags = [];
-    const allTagsRes = await conversationServices.getAllTags(userId);
-    if (allTagsRes?.success !== false) {
-        allTags = allTagsRes?.data?.tags || [];
-    }
-
-    const ensureTag = async (rawLabel) => {
-        const normalized = rawLabel.trim();
-        if (!normalized) return null;
-        let selected = allTags.find(
-            (tag) => tag?.name?.trim?.()?.toLowerCase() === normalized.toLowerCase(),
-        );
-        if (!selected) {
-            const createRes = await conversationServices.createTag({
-                userId,
-                name: normalized,
-            });
-            selected = createRes?.data?.tag || null;
-            if (selected) allTags = [...allTags, selected];
-        }
-        return selected;
-    };
-
-    for (const m of withTags) {
-        const t = roundVal(m.timestamp);
-        await conversationServices.createTagInstance({
-            conversationId,
-            workspaceId,
-            timestamp: t,
-        });
-        for (const tag of m.tags) {
-            const selectedTag = await ensureTag(tag.label);
-            if (!selectedTag?._id) continue;
-            await conversationServices.attachTag({
-                conversationId,
-                workspaceId,
-                tagId: selectedTag._id,
-                timestamp: t,
-            });
-        }
-    }
+/** Resolve new segment id from POST /conversations/recording/append response shapes. */
+function segmentIdFromAppendRes(res) {
+    const d = res?.data;
+    if (!d) return null;
+    return d._id ?? d.segmentId ?? d.segment?._id ?? null;
 }
 
 const RecordingExperience = ({ slug }) => {
@@ -206,12 +169,12 @@ const RecordingExperience = ({ slug }) => {
             try {
                 const res = await conversationServices.appendSegment(appendData);
                 if (!res.success) throw new Error(res.error);
-                newSegmentId = res?.data?._id;
+                newSegmentId = segmentIdFromAppendRes(res);
             } catch (err) {
                 console.warn("Initial append failed, retrying once...");
                 const retryRes = await conversationServices.appendSegment(appendData);
                 if (!retryRes.success) throw new Error(retryRes.error);
-                newSegmentId = retryRes?.data?._id;
+                newSegmentId = segmentIdFromAppendRes(retryRes);
             }
 
             if (pendingSegmentName.trim() && newSegmentId) {
@@ -227,30 +190,56 @@ const RecordingExperience = ({ slug }) => {
                 }
             }
 
-            try {
-                await syncRecordingMarkersToTimeline(markersSnapshot, conversation?._id);
-            } catch (e) {
-                console.warn('Sync recording bookmarks/tags non-fatal:', e);
+            const hasBookmarkTags = markersSnapshot.some(
+                (m) => (m.tags?.length ?? 0) > 0,
+            );
+            if (hasBookmarkTags && !newSegmentId) {
+                throw new Error(
+                    'Bookmark tags could not be saved: segment id missing from append response.',
+                );
             }
-            useRecordingStore.getState().clearMarkers();
-            useRecordingStore.getState().clearLocalTagDefinitions();
 
-            // STEP 5 - WAIT 1–1.5 SECONDS (Stabilization buffer)
-            // Gives the server time to persist the appended segment before we fetch.
-            await new Promise(resolve => setTimeout(resolve, 1200));
+            // STEP 5 - Brief buffer so the appended segment is queryable
+            await new Promise((resolve) => setTimeout(resolve, 1200));
 
-            // STEP 6 - REFRESH CONVERSATION FROM SERVER
-            // Fetches the updated conversation including the newly appended segment.
-            // This ensures TranscriptCard shows the new segment immediately after confirm.
-            // We do NOT rely on setConversation({ status: "pending" }) alone because 
-            // that would leave the segments array stale in the store.
+            // STEP 6 - Refresh once before bookmark→block sync (needs transcript + segments)
             await getConversationRef.current({
                 conversationId: conversation?._id,
                 workspaceId,
             });
-            // NOTE: Do NOT manually call setConversation after this. 
-            // getConversation already calls setConversation internally via the hook.
-            // Calling it again would overwrite the freshly fetched data with stale data.
+
+            try {
+                const syncResult = await syncBookmarksToTranscriptBlocks({
+                    conversationId: conversation?._id,
+                    workspaceId,
+                    userId,
+                    segmentId: newSegmentId,
+                    markers: markersSnapshot,
+                });
+                if (
+                    syncResult?.deferred &&
+                    newSegmentId &&
+                    markersSnapshot.some((m) => (m.tags?.length ?? 0) > 0)
+                ) {
+                    setPendingBookmarkSync(newSegmentId, markersSnapshot);
+                }
+            } catch (e) {
+                console.warn("Sync recording bookmarks to transcript blocks:", e);
+                if (
+                    newSegmentId &&
+                    markersSnapshot.some((m) => (m.tags?.length ?? 0) > 0)
+                ) {
+                    setPendingBookmarkSync(newSegmentId, markersSnapshot);
+                }
+            }
+
+            useRecordingStore.getState().clearMarkers();
+            useRecordingStore.getState().clearLocalTagDefinitions();
+
+            await getConversationRef.current({
+                conversationId: conversation?._id,
+                workspaceId,
+            });
 
         } catch (error) {
             console.error("Recording Finalization Error:", error);

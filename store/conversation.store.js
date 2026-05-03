@@ -11,11 +11,15 @@ const mapTagsToSegments = (segments, tags) => {
 
     return segments.map((segment) => ({
         ...segment,
-        tags: safeTags.filter(
-            (tag) => 
-                tag.timestamp >= segment.startTime && 
+        tags: safeTags.filter((tag) => {
+            if (tag.segmentId != null && tag.segmentId !== "") {
+                return String(tag.segmentId) === String(segment._id);
+            }
+            return (
+                tag.timestamp >= segment.startTime &&
                 tag.timestamp <= segment.endTime
-        ),
+            );
+        }),
     }));
 };
 
