@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
-  Gem,
+  Diamond,
   Mic,
   Play,
   RotateCw,
@@ -136,7 +136,7 @@ const RecordingPanel = ({ handleReset, handleConfirm }) => {
   return (
     <div className="mx-auto w-full max-w-3xl rounded-xl bg-white shadow-md ring-1 ring-gray-200">
       <div className="flex items-center justify-between px-5 py-3">
-        <div className="text-lg font-semibold tabular-nums text-gray-900">
+        <div className="flex-1 text-center text-lg font-semibold tabular-nums text-gray-900">
           {formatTimer(duration)}
         </div>
         <div className="flex items-center gap-2">
@@ -158,7 +158,9 @@ const RecordingPanel = ({ handleReset, handleConfirm }) => {
       </div>
 
       <div className="px-5 pb-2">
-        <StaticWaveform mediaStream={mediaStream} />
+        <div className="relative overflow-hidden rounded-lg">
+          <StaticWaveform mediaStream={mediaStream} />
+        </div>
       </div>
 
       <div className="flex items-center justify-between px-5 pb-2 pt-1">
@@ -179,7 +181,7 @@ const RecordingPanel = ({ handleReset, handleConfirm }) => {
             </span>
           </button>
           <button
-            className="flex h-8 w-8 items-center justify-center text-gray-900 disabled:opacity-50"
+            className={`flex h-9 w-9 items-center justify-center rounded-full disabled:opacity-50 transition-colors ${isPaused ? "bg-[#1C1C92] text-white" : "border border-gray-300 text-gray-600"}`}
             disabled={isProcessing}
           >
             <Play className="h-5 w-5 fill-current" />
@@ -198,7 +200,7 @@ const RecordingPanel = ({ handleReset, handleConfirm }) => {
           className="text-blue-600 disabled:opacity-50"
           disabled={isProcessing}
         >
-          <Gem className="h-5 w-5" strokeWidth={1.75} />
+          <Diamond className="text-blue-600 h-5 w-5" strokeWidth={1.75} />
         </button>
       </div>
 
@@ -245,7 +247,7 @@ const RecordingPanel = ({ handleReset, handleConfirm }) => {
         <button
           onClick={handlePauseToggle}
           disabled={isProcessing}
-          className={`rounded-md border border-gray-200 px-6 py-1.5 font-medium hover:bg-gray-50 disabled:opacity-50 transition-colors ${isPaused ? "text-red-600" : "text-gray-900"}`}
+          className={`rounded-md px-8 py-1.5 text-sm font-medium disabled:opacity-50 transition-colors ${isPaused ? "bg-[#1C1C92] text-white" : "border border-gray-300 text-gray-900 hover:bg-gray-50"}`}
         >
           {isProcessing ? "Processing..." : isPaused ? "Resume" : "Pause"}
         </button>

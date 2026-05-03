@@ -110,7 +110,23 @@ const useConversationStore = create((set, get) => ({
             ...state,
             ...updates
         }));
-    }
+    },
+
+    updateSpeakerInTranscript: (speakerId, updates) => {
+        set((state) => {
+            if (!state.transcript?.speakers) return state;
+            return {
+                transcript: {
+                    ...state.transcript,
+                    speakers: state.transcript.speakers.map((s) =>
+                        s._id.toString() === speakerId.toString()
+                            ? { ...s, ...updates }
+                            : s
+                    ),
+                },
+            };
+        });
+    },
 }));
 
 export default useConversationStore;

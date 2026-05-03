@@ -97,7 +97,8 @@ const copyTextToClipboard = async (text) => {
 };
 
 const TranscriptCard = () => {
-  const { conversation, segments, transcript } = useConversationStore();
+  const { conversation, segments, transcript, updateSpeakerInTranscript } =
+    useConversationStore();
   const { isRecording, startRecording } = useRecordingStore();
   const { getConversation } = useGetConversation();
 
@@ -134,6 +135,8 @@ const TranscriptCard = () => {
     segmentId: null,
   });
   const [segmentMenuBusy, setSegmentMenuBusy] = useState(false);
+  const [speakerNames, setSpeakerNames] = useState({});
+  const [blockSpeakerOverrides, setBlockSpeakerOverrides] = useState({});
 
   const fileInputRef = useRef(null);
   const getConversationRef = useRef(getConversation);
@@ -182,14 +185,16 @@ const TranscriptCard = () => {
   const speakerLookup = useMemo(() => {
     const map = {};
     (transcript?.speakers || []).forEach((s) => {
-      map[s._id.toString()] = {
+      const id = s._id.toString();
+      const override = speakerNames[id];
+      map[id] = {
         ...s,
-        name: s.name,
-        avatarEmoji: s.avatarEmoji || "🎙️",
+        name: override?.name ?? s.name,
+        avatarEmoji: (override?.emoji ?? s.avatarEmoji) || "🎙️",
       };
     });
     return map;
-  }, [transcript?.speakers]);
+  }, [transcript?.speakers, speakerNames]);
 
   const transcriptTagLookup = useMemo(() => {
     const map = {};
@@ -214,12 +219,25 @@ const TranscriptCard = () => {
   const clearBlockEditError = () =>
     setBlockEditError({ blockId: null, message: "" });
 
-  const handleSpeakerSaved = async () => {
-    if (!conversation?._id) return;
-    await getConversationRef.current({
-      conversationId: conversation._id,
-      workspaceId,
-    });
+  const handleSpeakerSaved = ({ speakerId, blockId, name, emoji }) => {
+    if (speakerId) {
+      updateSpeakerInTranscript(speakerId, {
+        name,
+        ...(emoji && { avatarEmoji: emoji }),
+      });
+
+      setSpeakerNames((prev) => ({
+        ...prev,
+        [speakerId.toString()]: { name, emoji },
+      }));
+    }
+
+    if (blockId && speakerId) {
+      setBlockSpeakerOverrides((prev) => ({
+        ...prev,
+        [blockId.toString()]: speakerId.toString(),
+      }));
+    }
   };
 
   const patchTranscriptBlock = async (block, fields) => {
@@ -866,7 +884,9 @@ const TranscriptCard = () => {
                       const blockIsEdited = block.isEdited === true;
                       const blockActive = block.isActive !== false;
                       const effectiveSpeakerId =
-                        block.speakerId?.toString() || null;
+                        blockSpeakerOverrides[block._id.toString()] ||
+                        block.speakerId?.toString() ||
+                        null;
                       const speaker = effectiveSpeakerId
                         ? speakerLookup[effectiveSpeakerId]
                         : null;
