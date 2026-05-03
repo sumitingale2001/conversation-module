@@ -28,7 +28,12 @@ const formatTimer = (seconds) => {
   return `${h}:${m}:${s}`;
 };
 
-const RecordingPanel = ({ handleReset, handleConfirm }) => {
+const RecordingPanel = ({
+  handleReset,
+  handleConfirm,
+  pendingName,
+  onPendingNameChange,
+}) => {
   const { conversation } = useConversationStore();
   const {
     isPaused,
@@ -158,8 +163,12 @@ const RecordingPanel = ({ handleReset, handleConfirm }) => {
       </div>
 
       <div className="px-5 pb-2">
-        <div className="relative overflow-hidden rounded-lg">
-          <StaticWaveform mediaStream={mediaStream} />
+        <div className="relative overflow-visible rounded-lg">
+          <StaticWaveform
+            mediaStream={mediaStream}
+            pendingName={pendingName}
+            onPendingNameChange={onPendingNameChange}
+          />
         </div>
       </div>
 

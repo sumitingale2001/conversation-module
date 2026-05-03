@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
-import { GripVertical, Mic } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { GripVertical, Mic, Trash2, Send } from 'lucide-react';
 import useConversationStore from '../../../../../store/conversation.store';
 import { useRecordingStore } from '../../../../../store/recording.store';
 import { conversationServices } from '../../../../../services/conversationServices';
@@ -34,7 +35,7 @@ const GAP_CSS = 0.85;
 const WAVEFORM_BG = '#E3E3E4';
 const BAR_FILL = '#979797';
 
-const StaticWaveform = ({ mediaStream }) => {
+const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
     const canvasRef = useRef(null);
     const requestRef = useRef(null);
     const audioContextRef = useRef(null);
@@ -44,6 +45,13 @@ const StaticWaveform = ({ mediaStream }) => {
     const { conversation, segments } = useConversationStore();
     const { duration, title, isPaused } = useRecordingStore();
     const { getConversation } = useGetConversation();
+
+    const [activePopover, setActivePopover] = useState(null);
+    const [popoverName, setPopoverName] = useState('');
+    const [popoverAnchor, setPopoverAnchor] = useState(null);
+    const [isRenaming, setIsRenaming] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
+    const popoverRef = useRef(null);
 
     // Drag reorder state
     const [orderedSegments, setOrderedSegments] = useState([]);
@@ -64,6 +72,92 @@ const StaticWaveform = ({ mediaStream }) => {
             setOrderedSegments([]);
         }
     }, [segments]);
+
+    const closePopover = useCallback(() => {
+        setActivePopover(null);
+        setPopoverAnchor(null);
+    }, []);
+
+    useEffect(() => {
+        if (!activePopover) return;
+        let removeDoc = () => {};
+        const rafId = requestAnimationFrame(() => {
+            const handlePointerDown = (e) => {
+                if (popoverRef.current?.contains(e.target)) return;
+                closePopover();
+            };
+            document.addEventListener('pointerdown', handlePointerDown);
+            removeDoc = () => document.removeEventListener('pointerdown', handlePointerDown);
+        });
+        const handleEsc = (e) => {
+            if (e.key === 'Escape') closePopover();
+        };
+        window.addEventListener('keydown', handleEsc);
+        return () => {
+            cancelAnimationFrame(rafId);
+            removeDoc();
+            window.removeEventListener('keydown', handleEsc);
+        };
+    }, [activePopover, closePopover]);
+
+    const openPopover = (id, name, anchorEl) => {
+        const r = anchorEl?.getBoundingClientRect?.();
+        setPopoverAnchor(r ?? null);
+        setActivePopover(id);
+        setPopoverName(name || '');
+    };
+
+    const handleRename = async (segmentId) => {
+        if (!popoverName.trim() || isRenaming) return;
+        if (segmentId === 'live') {
+            onPendingNameChange?.(popoverName.trim());
+            closePopover();
+            return;
+        }
+        setIsRenaming(true);
+        try {
+            const res = await conversationServices.renameSegment({
+                segmentId,
+                conversationId: conversation?._id,
+                workspaceId,
+                name: popoverName.trim(),
+            });
+            if (res?.success === false) return;
+            await getConversation({
+                conversationId: conversation?._id,
+                workspaceId,
+                silent: true,
+            });
+            closePopover();
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setIsRenaming(false);
+        }
+    };
+
+    const handleDelete = async (segmentId) => {
+        if (segmentId === 'live' || isDeleting) return;
+        setIsDeleting(true);
+        try {
+            const res = await conversationServices.deleteSegment({
+                segmentId,
+                conversationId: conversation?._id,
+                workspaceId,
+            });
+            if (res?.success === false) return;
+            await getConversation({
+                conversationId: conversation?._id,
+                workspaceId,
+                silent: true,
+            });
+            closePopover();
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setIsDeleting(false);
+        }
+    };
 
     // Live bar waveform (Figma-style gray bars; static pattern when paused)
     useEffect(() => {
@@ -266,10 +360,68 @@ const StaticWaveform = ({ mediaStream }) => {
     isPausedRef.current = isPaused;
     durationRef.current = duration;
 
+    const SegmentPopover = ({ id, duration: dur, createdAt }) => {
+        if (!popoverAnchor || typeof document === 'undefined') return null;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const left = Math.max(8, Math.min(popoverAnchor.left, vw - 308));
+        const bottom = vh - popoverAnchor.top + 8;
+        return createPortal(
+            <div
+                ref={popoverRef}
+                className="w-[300px] rounded-xl border border-gray-200 bg-white shadow-lg"
+                style={{
+                    position: 'fixed',
+                    left,
+                    bottom,
+                    zIndex: 9999,
+                }}
+            >
+                <div className="flex items-center gap-2 px-3 pb-2 pt-3">
+                    <Mic className="h-4 w-4 shrink-0 text-gray-500" />
+                    <input
+                        autoFocus
+                        className="flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-[#1C1C92] focus:ring-1 focus:ring-[#1C1C92]/20"
+                        value={popoverName}
+                        onChange={(e) => setPopoverName(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleRename(id);
+                        }}
+                    />
+                </div>
+                <div className="flex items-center justify-between px-3 pb-3">
+                    <span className="text-xs text-gray-400">
+                        {formatTimer(dur)}
+                        {createdAt ? ` | ${createdAt}` : ''}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                        <button
+                            type="button"
+                            onClick={() => handleDelete(id)}
+                            disabled={isDeleting || id === 'live'}
+                            className="rounded-lg p-1.5 text-gray-400 transition-colors hover:text-red-500 disabled:opacity-50"
+                        >
+                            <Trash2 className="h-4 w-4" />
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => handleRename(id)}
+                            disabled={isRenaming || !popoverName.trim()}
+                            className="rounded-lg bg-[#1C1C92] p-1.5 text-white transition-colors hover:bg-[#16166e] disabled:opacity-50"
+                        >
+                            <Send className="h-4 w-4" />
+                        </button>
+                    </div>
+                </div>
+            </div>,
+            document.body,
+        );
+    };
+
     return (
         <div className="relative w-full select-none">
             {/* ── OUTER WAVEFORM CONTAINER ─────────────────────────────────── */}
-            <div className="relative h-24 w-full overflow-hidden rounded-lg border border-gray-200 bg-[#F3F4F6] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
+            <div className="relative h-24 w-full overflow-visible rounded-lg border border-gray-200 bg-[#F3F4F6] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
                 
                 {/* Fixed center line — recording grows left from here (instant / live) */}
                 <div className="pointer-events-none absolute inset-y-0 left-1/2 z-30 w-px -translate-x-1/2 bg-red-500/85 shadow-[0_0_6px_rgba(239,68,68,0.45)]" />
@@ -278,25 +430,45 @@ const StaticWaveform = ({ mediaStream }) => {
                     /* ── STATE 2: chip right edge at center playhead, width grows toward the left ── */
                     <div className="pointer-events-none absolute inset-y-2 left-2 right-2 z-10">
                         <div
-                            className="absolute inset-y-0 overflow-hidden rounded-l-lg rounded-r-none border border-[#C6C6C7] border-r-0 bg-[#E3E3E4] shadow-sm pointer-events-auto"
+                            className="absolute inset-y-0 overflow-visible rounded-l-lg rounded-r-none border border-[#C6C6C7] border-r-0 bg-[#E3E3E4] shadow-sm pointer-events-auto"
                             style={{
                                 left: `calc(50% - ${chipWidthPct}%)`,
                                 width: `${chipWidthPct}%`,
                             }}
                         >
-                            <div className="absolute left-0 right-0 top-0 z-20 flex items-center gap-1.5 border-b border-[#8E9092] bg-[#A1A3A5] px-3 pb-1.5 pt-2">
-                                <GripVertical className="h-3 w-3 shrink-0 text-[#262626]" />
-                                <Mic className="h-3 w-3 shrink-0 text-[#262626]" />
-                                <span className="max-w-[200px] truncate text-xs font-semibold tracking-tight text-[#262626]">
-                                    {title || "[Untitled]"}
-                                </span>
-                                <div className="flex-1" />
-                                <span className="font-mono text-[10px] tracking-tight text-[#262626]">
-                                    {formatTimer(duration)}
-                                </span>
+                            <div className="absolute left-0 right-0 top-0 z-20">
+                                <div className="relative flex items-center gap-1.5 border-b border-[#8E9092] bg-[#A1A3A5] px-3 pb-1.5 pt-2">
+                                    <GripVertical className="h-3 w-3 shrink-0 text-[#262626]" />
+                                    <Mic className="h-3 w-3 shrink-0 text-[#262626]" />
+                                    <span
+                                        role="button"
+                                        tabIndex={0}
+                                        className="max-w-[200px] cursor-pointer truncate text-xs font-semibold tracking-tight text-[#262626]"
+                                        onMouseDown={(e) => e.stopPropagation()}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            openPopover('live', pendingName || title || '[Untitled]', e.currentTarget);
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                e.preventDefault();
+                                                openPopover('live', pendingName || title || '[Untitled]', e.currentTarget);
+                                            }
+                                        }}
+                                    >
+                                        {pendingName || title || '[Untitled]'}
+                                    </span>
+                                    <div className="flex-1" />
+                                    <span className="font-mono text-[10px] tracking-tight text-[#262626]">
+                                        {formatTimer(duration)}
+                                    </span>
+                                    {activePopover === 'live' && (
+                                        <SegmentPopover id="live" duration={duration} />
+                                    )}
+                                </div>
                             </div>
 
-                            <div className="absolute inset-x-0 bottom-0 top-9 z-10 bg-[#E3E3E4]">
+                            <div className="absolute inset-x-0 bottom-0 top-9 z-10 overflow-hidden rounded-bl-lg bg-[#E3E3E4]">
                                 <canvas
                                     ref={canvasRef}
                                     className="block h-full min-h-10 w-full"
@@ -318,7 +490,7 @@ const StaticWaveform = ({ mediaStream }) => {
                                 onDrop={(e) => handleDrop(e, index)}
                                 onDragEnd={handleDragEnd}
                                 className={`
-                                    relative flex min-w-[140px] cursor-grab select-none flex-col overflow-hidden rounded-lg border
+                                    relative flex min-w-[140px] cursor-grab select-none flex-col overflow-visible rounded-lg border
                                     border-[#C6C6C7] bg-[#E3E3E4] shadow-sm
                                     transition-all duration-150 active:cursor-grabbing
                                     ${dragOverIndex === index && dragIndex !== index
@@ -332,16 +504,48 @@ const StaticWaveform = ({ mediaStream }) => {
                                 }}
                             >
                                 {/* Chip header */}
-                                <div className="flex shrink-0 items-center gap-1.5 border-b border-[#8E9092] bg-[#A1A3A5] px-2.5 pb-1 pt-2 z-10">
+                                <div className="relative flex shrink-0 items-center gap-1.5 border-b border-[#8E9092] bg-[#A1A3A5] px-2.5 pb-1 pt-2 z-10">
                                     <GripVertical className="h-3 w-3 text-[#262626]" />
                                     <Mic className="h-3 w-3 text-[#262626]" />
-                                    <span className="truncate text-[11px] font-semibold text-[#262626]">
+                                    <span
+                                        role="button"
+                                        tabIndex={0}
+                                        className="truncate text-[11px] font-semibold text-[#262626] cursor-pointer"
+                                        onMouseDown={(e) => e.stopPropagation()}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            openPopover(seg._id, seg.name || `Recording ${index + 1}`, e.currentTarget);
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                e.preventDefault();
+                                                openPopover(seg._id, seg.name || `Recording ${index + 1}`, e.currentTarget);
+                                            }
+                                        }}
+                                    >
                                         {seg.name || `Recording ${index + 1}`}
                                     </span>
                                     <div className="flex-1" />
                                     <span className="font-mono text-[10px] text-[#262626]">
                                         {formatTimer(seg.duration)}
                                     </span>
+                                    {activePopover === seg._id && (
+                                        <SegmentPopover
+                                            id={seg._id}
+                                            duration={seg.duration}
+                                            createdAt={
+                                                seg.createdAt
+                                                    ? new Date(seg.createdAt).toLocaleString('en-GB', {
+                                                          day: '2-digit',
+                                                          month: 'short',
+                                                          hour: '2-digit',
+                                                          minute: '2-digit',
+                                                          hour12: true,
+                                                      })
+                                                    : undefined
+                                            }
+                                        />
+                                    )}
                                 </div>
 
                                 <div className="flex flex-1 items-center justify-center bg-[#E3E3E4] px-2 pb-1.5 pt-0.5">

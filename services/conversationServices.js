@@ -172,6 +172,17 @@ export const conversationServices = {
     );
   },
 
+  async renameSegment({ segmentId, conversationId, workspaceId, name }) {
+    if (!segmentId || !conversationId || !workspaceId || !name) return null;
+    return await request(
+      apiInstance.patch(`/conversations/segment/${segmentId}/rename`, {
+        conversationId,
+        workspaceId,
+        name,
+      }),
+    );
+  },
+
   ensureTranscript: async ({ conversationId, workspaceId }) => {
     try {
       const { data } = await apiInstance.get(

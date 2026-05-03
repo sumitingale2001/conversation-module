@@ -34,6 +34,7 @@ const RecordingExperience = ({ slug }) => {
     });
 
     const [error, setError] = useState(false);
+    const [pendingSegmentName, setPendingSegmentName] = useState('');
 
     const handleReset = () => {
         reset();
@@ -121,13 +122,29 @@ const RecordingExperience = ({ slug }) => {
             };
 
             // RULE 3: APPEND FAIL -> RETRY ONCE
+            let newSegmentId = null;
             try {
                 const res = await conversationServices.appendSegment(appendData);
                 if (!res.success) throw new Error(res.error);
+                newSegmentId = res?.data?._id;
             } catch (err) {
                 console.warn("Initial append failed, retrying once...");
                 const retryRes = await conversationServices.appendSegment(appendData);
                 if (!retryRes.success) throw new Error(retryRes.error);
+                newSegmentId = retryRes?.data?._id;
+            }
+
+            if (pendingSegmentName.trim() && newSegmentId) {
+                try {
+                    await conversationServices.renameSegment({
+                        segmentId: newSegmentId,
+                        conversationId: conversation?._id,
+                        workspaceId,
+                        name: pendingSegmentName.trim(),
+                    });
+                } catch (e) {
+                    console.warn('Rename non-fatal:', e);
+                }
             }
 
             // STEP 5 - WAIT 1–1.5 SECONDS (Stabilization buffer)
@@ -151,6 +168,7 @@ const RecordingExperience = ({ slug }) => {
             console.error("Recording Finalization Error:", error);
             setError(true);
         } finally {
+            setPendingSegmentName('');
             setIsProcessingLocal(false);
         }
     };
@@ -174,6 +192,8 @@ const RecordingExperience = ({ slug }) => {
                 <RecordingPanel 
                     handleReset={handleReset}
                     handleConfirm={handleConfirm}
+                    pendingName={pendingSegmentName}
+                    onPendingNameChange={setPendingSegmentName}
                 />
             </div>
         </div>
