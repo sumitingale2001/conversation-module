@@ -12,9 +12,9 @@ import {
   RotateCw,
   RefreshCw,
 } from "lucide-react";
-import useConversationStore from "../../../../../store/conversation.store";
-import { useRecordingStore } from "../../../../../store/recording.store";
-import { useConversationPlayback } from "../../../../../hooks/use-conversation-playback";
+import useConversationStore from "@/store/conversation.store";
+import { useRecordingStore } from "@/store/recording.store";
+import { useConversationPlayback } from "@/hooks/use-conversation-playback";
 import StaticWaveform from "./static-waveform";
 
 const formatTimer = (seconds) => {

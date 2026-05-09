@@ -19,18 +19,11 @@ import {
   AudioLines,
 } from "lucide-react";
 import EmojiPicker from "emoji-picker-react";
-import {
-  Popover,
-  Menu,
-  MenuItem,
-  Popper,
-  Fade,
-  Paper,
-} from "@mui/material";
+import { Popover, Menu, MenuItem, Popper, Fade, Paper } from "@mui/material";
 import { createPortal } from "react-dom";
-import { conversationServices } from "../../../../../services/conversationServices";
 import ManageTagsModal from "./manage-tags-modal";
 import { TAG_COLOR_PALETTE } from "./tag-palette";
+import { conversationServices } from "@/services/conversationServices";
 
 export const AssignSpeakerPopover = ({
   speaker,
@@ -603,7 +596,8 @@ export const BookmarkTagsHoverPopover = ({
                   bg = "#FFF8E7";
                   textColor = "#B87400";
                 } else {
-                  borderColor = "#5E8BFF";e
+                  borderColor = "#5E8BFF";
+                  e;
                   bg = "#EAF1FF";
                   textColor = "#2F68FF";
                 }

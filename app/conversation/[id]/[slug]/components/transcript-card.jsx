@@ -11,13 +11,13 @@ import {
   Play,
   Copy,
 } from "lucide-react";
-import useConversationStore from "../../../../../store/conversation.store";
-import { conversationServices } from "../../../../../services/conversationServices";
-import { flushPendingBookmarkSyncForSegment } from "../../../../../services/bookmark-transcript-sync";
-import { workspaceId, userId } from "../../../../../utils/conversation.utils";
-import apiInstance from "../../../../../config/apiInstance";
-import useGetConversation from "../../../../../hooks/use-get-conversation";
-import { useRecordingStore } from "../../../../../store/recording.store";
+import useConversationStore from "@/store/conversation.store";
+import { conversationServices } from "@/services/conversationServices";
+import { flushPendingBookmarkSyncForSegment } from "@/services/bookmark-transcript-sync";
+import apiInstance from "@/config/apiInstance";
+import useGetConversation from "@/hooks/use-get-conversation";
+import { useRecordingStore } from "@/store/recording.store";
+import { userId, workspaceId } from "@/utils/conversation.utils";
 import {
   BlockActionsMenu,
   AddTagPopover,
@@ -1297,7 +1297,11 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
                 </>
               ) : (
                 <>
-                  <img src="/upload-media.png" className="h-4 w-4" alt="upload" />
+                  <img
+                    src="/upload-media.png"
+                    className="h-4 w-4"
+                    alt="upload"
+                  />
                   Add source
                 </>
               )}
