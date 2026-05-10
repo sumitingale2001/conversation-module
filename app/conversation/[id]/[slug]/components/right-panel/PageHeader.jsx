@@ -49,7 +49,7 @@ const PageHeader = ({
           <div className="min-w-0 flex-1">
             {isSummaryPage ? (
               <span className="block max-w-full truncate text-left text-[12px] font-bold leading-[16px] text-[#666666]">
-                Summary
+                {page.name}
               </span>
             ) : isEditing ? (
               <input

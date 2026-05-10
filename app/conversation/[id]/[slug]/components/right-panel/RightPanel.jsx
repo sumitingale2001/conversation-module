@@ -3,6 +3,7 @@ import useConversationStore from "@/store/conversation.store";
 import {
   createPage,
   createFallbackSummaryPage,
+  createPreset,
   deletePage,
   getPages,
   patchPage,
@@ -13,6 +14,7 @@ import PageTabBar from "./PageTabBar";
 import StaleRefreshBanner from "./StaleRefreshBanner";
 import TiptapPageEditor from "./editor/TiptapPageEditor";
 import ManagePresetModal from "./preset/ManagePresetModal";
+import PresetFormModal from "./preset/PresetFormModal";
 import { userId, workspaceId } from "@/utils/conversation.utils";
 
 const buildLocalPage = (payload, position) => ({
@@ -37,6 +39,7 @@ const RightPanel = () => {
   const [activePageId, setActivePageId] = useState("local-summary");
   const [plainText, setPlainText] = useState("");
   const [managePresetsOpen, setManagePresetsOpen] = useState(false);
+  const [createPresetOpen, setCreatePresetOpen] = useState(false);
   const saveTimeoutRef = useRef(null);
 
   useEffect(() => {
@@ -67,15 +70,22 @@ const RightPanel = () => {
     [workspaceId, conversationId],
   );
 
-  const createAndSelectPage = async (payload) => {
-    const localPage = buildLocalPage(payload, pages.length);
-    setPages((prev) => [...prev, localPage]);
+  const createAndSelectPage = async (payload, { prepend = false } = {}) => {
+    let localPage;
+    let apiPosition = 0;
+
+    setPages((prev) => {
+      apiPosition = prepend ? 0 : prev.length;
+      localPage = buildLocalPage(payload, apiPosition);
+      return prepend ? [localPage, ...prev] : [...prev, localPage];
+    });
+
     setActivePageId(localPage._id);
 
     const created = await createPage({
       workspaceId,
       conversationId,
-      payload,
+      payload: { ...payload, position: apiPosition },
       userId,
     });
     if (created?._id) {
@@ -84,6 +94,16 @@ const RightPanel = () => {
       );
       setActivePageId(created._id);
     }
+  };
+
+  const handleCreateSummaryPage = () => {
+    const summaryCount = pages.filter((p) => p.type === "summary").length;
+    const name =
+      summaryCount === 0 ? "Summary" : `Summary (${summaryCount + 1})`;
+    createAndSelectPage(
+      { name, type: "summary", content: null },
+      { prepend: true },
+    );
   };
 
   const handleRename = (nextName) => {
@@ -148,6 +168,8 @@ const RightPanel = () => {
             content: null,
           })
         }
+        onCreatePreset={() => setCreatePresetOpen(true)}
+        onCreateSummaryPage={handleCreateSummaryPage}
         onCreateFromPreset={(preset) =>
           createAndSelectPage({
             name: preset.name,
@@ -197,6 +219,16 @@ const RightPanel = () => {
         open={managePresetsOpen}
         workspaceId={workspaceId}
         onClose={() => setManagePresetsOpen(false)}
+      />
+
+      <PresetFormModal
+        open={createPresetOpen}
+        mode="create"
+        onClose={() => setCreatePresetOpen(false)}
+        onSubmit={async (payload) => {
+          await createPreset({ workspaceId, payload });
+          setCreatePresetOpen(false);
+        }}
       />
     </div>
   );

@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Plus } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import useConversationStore from "@/store/conversation.store";
 import { getPresets } from "../pageApi";
 
 const PresetDropdown = ({
   children,
   onCreateCustomPage,
+  onCreatePreset,
+  onCreateSummaryPage,
   onCreateFromPreset,
   onOpenManagePresets,
 }) => {
@@ -31,7 +34,8 @@ const PresetDropdown = ({
     return () => window.removeEventListener("mousedown", onMouseDown);
   }, []);
 
-  const hasPresets = useMemo(() => presets.length > 0, [presets.length]);
+  const menuButtonClass =
+    "flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-100";
 
   return (
     <div className="relative" ref={wrapperRef}>
@@ -39,47 +43,66 @@ const PresetDropdown = ({
         {children}
       </span>
       {open && (
-        <div className="absolute  z-20 mt-2 w-56 rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
+        <div className="absolute right-0 z-20 mt-2 w-56 rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
           <button
             type="button"
+            className={menuButtonClass}
             onClick={() => {
               setOpen(false);
               onCreateCustomPage();
             }}
-            className="w-full rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
           >
-            New Page
+            <Plus className="h-4 w-4 shrink-0 text-gray-900" strokeWidth={2} />
+            New page
           </button>
-          <div className="my-1 border-t border-gray-100" />
-          {hasPresets ? (
-            presets.map((preset) => (
-              <button
-                key={preset._id}
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  onCreateFromPreset(preset);
-                }}
-                className="w-full truncate rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
-              >
-                {preset.name}
-              </button>
-            ))
-          ) : (
-            <p className="px-3 py-2 text-xs text-gray-400">
-              No custom presets yet
-            </p>
-          )}
-          <div className="my-1 border-t border-gray-100" />
           <button
             type="button"
+            className={menuButtonClass}
+            onClick={() => {
+              setOpen(false);
+              onCreatePreset();
+            }}
+          >
+            <Plus className="h-4 w-4 shrink-0 text-gray-900" strokeWidth={2} />
+            Create Preset
+          </button>
+
+          <div className="my-1 border-t border-gray-100" />
+
+          <button
+            type="button"
+            className="w-full rounded px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-100"
+            onClick={() => {
+              setOpen(false);
+              onCreateSummaryPage();
+            }}
+          >
+            Summary
+          </button>
+
+          {presets.map((preset) => (
+            <button
+              key={preset._id}
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onCreateFromPreset(preset);
+              }}
+              className="w-full truncate rounded px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-100"
+            >
+              {preset.name}
+            </button>
+          ))}
+
+          <button
+            type="button"
+            className="w-full rounded px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-100"
             onClick={() => {
               setOpen(false);
               onOpenManagePresets();
             }}
-            className="w-full rounded px-3 py-2 text-left text-sm font-medium text-indigo-600 hover:bg-indigo-50"
           >
-            Manage Presets
+            Manage presets
           </button>
         </div>
       )}

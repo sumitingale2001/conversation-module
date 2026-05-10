@@ -6,6 +6,8 @@ const PageTabBar = ({
   activePageId,
   onTabClick,
   onCreateCustomPage,
+  onCreatePreset,
+  onCreateSummaryPage,
   onCreateFromPreset,
   onOpenManagePresets,
 }) => {
@@ -36,6 +38,8 @@ const PageTabBar = ({
       <div className="shrink-0">
         <PresetDropdown
           onCreateCustomPage={onCreateCustomPage}
+          onCreatePreset={onCreatePreset}
+          onCreateSummaryPage={onCreateSummaryPage}
           onCreateFromPreset={onCreateFromPreset}
           onOpenManagePresets={onOpenManagePresets}
         >
