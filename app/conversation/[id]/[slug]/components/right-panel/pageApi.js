@@ -151,3 +151,39 @@ export const reorderPresets = async ({ workspaceId, presetIds }) => {
     return null;
   }
 };
+
+/** GET workspace canvases for “Link to” picker */
+export const getWorkspaceCanvases = async ({ workspaceId }) => {
+  if (!workspaceId) return [];
+  try {
+    const { data } = await apiInstance.get(
+      `/workspace-chat/all-chats?workspaceId=${workspaceId}`,
+    );
+    if (Array.isArray(data?.data)) return data.data;
+    if (Array.isArray(data)) return data;
+    return [];
+  } catch (error) {
+    console.warn("[right-panel] getWorkspaceCanvases failed", error);
+    return [];
+  }
+};
+
+/** PATCH page canvas links — body { canvasIds } */
+export const addCanvasLinks = async ({
+  workspaceId,
+  conversationId,
+  pageId,
+  canvasIds,
+}) => {
+  if (!workspaceId || !conversationId || !pageId) return false;
+  try {
+    await apiInstance.patch(
+      `/summary-page/workspaces/${workspaceId}/conversations/${conversationId}/pages/${pageId}/canvas-links`,
+      { canvasIds },
+    );
+    return true;
+  } catch (error) {
+    console.warn("[right-panel] addCanvasLinks failed", error);
+    return false;
+  }
+};

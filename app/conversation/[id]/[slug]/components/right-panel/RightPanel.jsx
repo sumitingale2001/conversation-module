@@ -13,6 +13,7 @@ import PageHeader from "./PageHeader";
 import PageTabBar from "./PageTabBar";
 import StaleRefreshBanner from "./StaleRefreshBanner";
 import TiptapPageEditor from "./editor/TiptapPageEditor";
+import LinkToCanvasModal from "./LinkToCanvasModal";
 import ManagePresetModal from "./preset/ManagePresetModal";
 import PresetFormModal from "./preset/PresetFormModal";
 import { userId, workspaceId } from "@/utils/conversation.utils";
@@ -69,6 +70,7 @@ const RightPanel = () => {
   const [plainText, setPlainText] = useState("");
   const [managePresetsOpen, setManagePresetsOpen] = useState(false);
   const [createPresetOpen, setCreatePresetOpen] = useState(false);
+  const [linkCanvasOpen, setLinkCanvasOpen] = useState(false);
   const saveTimeoutRef = useRef(null);
 
   const setPages = useCallback((updater) => {
@@ -119,6 +121,20 @@ const RightPanel = () => {
     () => pages.find((page) => page._id === activePageId) ?? null,
     [pages, activePageId],
   );
+
+  const existingCanvasLinks = useMemo(() => {
+    const raw = activePage?.canvasLinks;
+    return Array.isArray(raw) ? raw.map(String) : [];
+  }, [activePage]);
+
+  const refreshPagesFromServer = useCallback(async () => {
+    if (!workspaceId || !conversationId) return;
+    const incomingPages = await getPages({ workspaceId, conversationId });
+    setState((prev) => ({
+      pages: mergePagesFromServer(prev.pages, incomingPages),
+      activePageId: prev.activePageId,
+    }));
+  }, [workspaceId, conversationId]);
 
   const persistPage = useCallback(
     (pageId, payload) => {
@@ -254,7 +270,7 @@ const RightPanel = () => {
               editorText={plainText}
               onRename={handleRename}
               onDelete={handleDeletePage}
-              onLinkCanvas={() => {}}
+              onLinkCanvas={() => setLinkCanvasOpen(true)}
               onOpenManagePresets={() => setManagePresetsOpen(true)}
             />
             <EmptyState pageName={activePage.name} />
@@ -266,7 +282,7 @@ const RightPanel = () => {
               editorText={plainText}
               onRename={handleRename}
               onDelete={handleDeletePage}
-              onLinkCanvas={() => {}}
+              onLinkCanvas={() => setLinkCanvasOpen(true)}
               onOpenManagePresets={() => setManagePresetsOpen(true)}
             />
             {activePage.isStale && <StaleRefreshBanner />}
@@ -295,6 +311,19 @@ const RightPanel = () => {
           setCreatePresetOpen(false);
         }}
       />
+
+      {activePage && workspaceId && conversationId ? (
+        <LinkToCanvasModal
+          open={linkCanvasOpen}
+          onClose={() => setLinkCanvasOpen(false)}
+          onSuccess={refreshPagesFromServer}
+          workspaceId={workspaceId}
+          conversationId={conversationId}
+          pageId={String(activePage._id)}
+          pageName={activePage.name}
+          existingCanvasLinks={existingCanvasLinks}
+        />
+      ) : null}
     </div>
   );
 };
