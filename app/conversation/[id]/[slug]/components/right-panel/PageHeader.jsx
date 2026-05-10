@@ -1,4 +1,4 @@
-import { Copy, MoreHorizontal, SquareStack } from "lucide-react";
+import { Copy, FileText } from "lucide-react";
 import Image from "next/image";
 import { useEffect, useState } from "react";
 
@@ -25,18 +25,33 @@ const PageHeader = ({
     onRename(nextName);
   };
 
+  const isSummaryPage =
+    page?.type === "summary" || page?._id === "local-summary";
+
   return (
     <div className="bg-white px-4 py-3">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <span
-            className="shrink-0 select-none text-base leading-none text-gray-500"
-            aria-hidden
-          >
-            ✦
-          </span>
+          {isSummaryPage ? (
+            <span
+              className="shrink-0 select-none text-base leading-none text-gray-500"
+              aria-hidden
+            >
+              ✦
+            </span>
+          ) : (
+            <FileText
+              className="h-4 w-4 shrink-0 text-gray-500"
+              strokeWidth={2}
+              aria-hidden
+            />
+          )}
           <div className="min-w-0 flex-1">
-            {isEditing ? (
+            {isSummaryPage ? (
+              <span className="block max-w-full truncate text-left text-[12px] font-bold leading-[16px] text-[#666666]">
+                Summary
+              </span>
+            ) : isEditing ? (
               <input
                 autoFocus
                 value={nameDraft}
@@ -50,27 +65,29 @@ const PageHeader = ({
                   }
                 }}
                 maxLength={100}
-                className="w-full rounded border border-gray-200 px-2 py-1 text-base font-bold text-[#1C1C92] outline-none ring-[#1C1C92]/30 focus:ring-2"
+                className="w-full bg-transparent px-2 py-1 text-[12px] leading-[16px] text-gray-500 outline-none"
               />
             ) : (
               <button
                 type="button"
                 onClick={() => setIsEditing(true)}
-                className="max-w-full truncate text-left text-base font-bold text-[#666666] text-[12px] leading-[16px]"
+                className="max-w-full truncate text-left text-[12px] font-bold leading-[16px] text-[#666666]"
               >
-                [{page.name}]
+                {page.name}
               </button>
             )}
           </div>
         </div>
 
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-          <button
-            type="button"
-            className="rounded-full cursor-pointer px-3 py-1.5 text-[12px] leading-[16px] font-medium text-[#1C1C92]"
-          >
-            Generate
-          </button>
+          {isSummaryPage && (
+            <button
+              type="button"
+              className="cursor-pointer rounded-full px-3 py-1.5 text-[12px] font-medium leading-[16px] text-[#1C1C92]"
+            >
+              Generate
+            </button>
+          )}
 
           <button
             type="button"

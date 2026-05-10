@@ -3,6 +3,7 @@ import useConversationStore from "@/store/conversation.store";
 import {
   createPage,
   createFallbackSummaryPage,
+  deletePage,
   getPages,
   patchPage,
 } from "./pageApi";
@@ -19,7 +20,7 @@ const buildLocalPage = (payload, position) => ({
   name: payload.name,
   type: payload.type,
   position,
-  content: null,
+  content: payload.type === "custom" ? "" : null,
   presetId: payload.presetId || null,
   isStale: false,
   generatedAt: null,
@@ -87,6 +88,12 @@ const RightPanel = () => {
 
   const handleRename = (nextName) => {
     if (!activePage) return;
+    if (
+      activePage.type === "summary" ||
+      activePage._id === "local-summary"
+    ) {
+      return;
+    }
     setPages((prev) =>
       prev.map((page) =>
         page._id === activePage._id
@@ -113,9 +120,15 @@ const RightPanel = () => {
     persistPage(activePage._id, { content: nextContent });
   };
 
-  const handleDeletePage = () => {
+  const handleDeletePage = async () => {
     if (!activePage || pages.length <= 1) return;
-    const nextPages = pages.filter((page) => page._id !== activePage._id);
+    const pageId = activePage._id;
+    const isLocalOnly = String(pageId).startsWith("local-");
+    if (workspaceId && conversationId && !isLocalOnly) {
+      const ok = await deletePage({ workspaceId, conversationId, pageId });
+      if (!ok) return;
+    }
+    const nextPages = pages.filter((page) => page._id !== pageId);
     setPages(nextPages);
     setActivePageId(nextPages[0]?._id || "");
   };
@@ -146,8 +159,8 @@ const RightPanel = () => {
         onOpenManagePresets={() => setManagePresetsOpen(true)}
       />
 
-      <div className="flex min-h-0 flex-1 flex-col p-4">
-        {activePage.content === null ? (
+      <div className="flex min-h-0 flex-1 flex-col px-4">
+        {activePage.content === null && activePage.type !== "custom" ? (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
             <PageHeader
               page={activePage}
@@ -160,7 +173,7 @@ const RightPanel = () => {
             <EmptyState pageName={activePage.name} />
           </div>
         ) : (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
             <PageHeader
               page={activePage}
               editorText={plainText}

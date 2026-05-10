@@ -50,6 +50,19 @@ export const patchPage = async ({
   }
 };
 
+export const deletePage = async ({ workspaceId, conversationId, pageId }) => {
+  if (!workspaceId || !conversationId || !pageId) return false;
+  try {
+    await apiInstance.delete(
+      `/summary-page/workspaces/${workspaceId}/conversations/${conversationId}/pages/${pageId}`,
+    );
+    return true;
+  } catch (error) {
+    console.warn("[right-panel] deletePage failed", error);
+    return false;
+  }
+};
+
 export const createPage = async ({
   workspaceId,
   conversationId,
