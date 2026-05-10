@@ -1,10 +1,10 @@
-import { Copy, MoreHorizontal } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Copy, MoreHorizontal, SquareStack } from "lucide-react";
+import Image from "next/image";
+import { useEffect, useState } from "react";
 
 const PageHeader = ({
   page,
   onRename,
-  editorText,
   onDelete,
   onLinkCanvas,
   onOpenManagePresets,
@@ -14,14 +14,9 @@ const PageHeader = ({
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync local draft when page.name updates externally
     setNameDraft(page?.name || "");
   }, [page?.name]);
-
-  const wordCount = useMemo(() => {
-    const text = (editorText || "").trim();
-    if (!text) return 0;
-    return text.split(/\s+/).length;
-  }, [editorText]);
 
   const saveName = () => {
     const nextName = nameDraft.trim();
@@ -31,60 +26,75 @@ const PageHeader = ({
   };
 
   return (
-    <div className="border-b border-gray-200 bg-white px-4 py-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          {isEditing ? (
-            <input
-              autoFocus
-              value={nameDraft}
-              onChange={(e) => setNameDraft(e.target.value)}
-              onBlur={saveName}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") saveName();
-                if (e.key === "Escape") {
-                  setNameDraft(page.name);
-                  setIsEditing(false);
-                }
-              }}
-              maxLength={100}
-              className="w-full rounded border border-gray-200 px-2 py-1 text-base font-semibold text-gray-800 outline-none ring-indigo-400 focus:ring-1"
-            />
-          ) : (
-            <button
-              type="button"
-              onClick={() => setIsEditing(true)}
-              className="max-w-full truncate text-left text-base font-semibold text-gray-900"
-            >
-              {page.name}
-            </button>
-          )}
-          <div className="mt-1 text-xs text-gray-500">
-            Edited {new Date(page.updatedAt || page.createdAt).toLocaleString()}
+    <div className="bg-white px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span
+            className="shrink-0 select-none text-base leading-none text-gray-500"
+            aria-hidden
+          >
+            ✦
+          </span>
+          <div className="min-w-0 flex-1">
+            {isEditing ? (
+              <input
+                autoFocus
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onBlur={saveName}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveName();
+                  if (e.key === "Escape") {
+                    setNameDraft(page.name);
+                    setIsEditing(false);
+                  }
+                }}
+                maxLength={100}
+                className="w-full rounded border border-gray-200 px-2 py-1 text-base font-bold text-[#1C1C92] outline-none ring-[#1C1C92]/30 focus:ring-2"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsEditing(true)}
+                className="max-w-full truncate text-left text-base font-bold text-[#666666] text-[12px] leading-[16px]"
+              >
+                [{page.name}]
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="rounded-full border border-gray-200 px-2 py-1 text-xs text-gray-500">
-            {wordCount} words
-          </span>
+        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           <button
             type="button"
-            onClick={() => navigator.clipboard?.writeText(editorText || "")}
-            className="rounded p-1.5 text-gray-500 hover:bg-gray-100"
-            aria-label="Copy text"
+            className="rounded-full cursor-pointer px-3 py-1.5 text-[12px] leading-[16px] font-medium text-[#1C1C92]"
           >
-            <Copy className="h-4 w-4" />
+            Generate
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onLinkCanvas()}
+            className="rounded-md p-1.5 text-[12px] leading-[16px] text-gray-500 hover:bg-gray-100"
+            aria-label="Canvas"
+          >
+            <Copy className="h-4 w-4" strokeWidth={2} />
           </button>
 
           <div className="relative">
             <button
               type="button"
               onClick={() => setMenuOpen((prev) => !prev)}
-              className="rounded p-1.5 text-gray-500 hover:bg-gray-100"
+              className="rounded-md p-1.5 text-[#1C1C92] hover:bg-gray-100"
               aria-label="Open page actions"
             >
-              <MoreHorizontal className="h-4 w-4" />
+              <Image
+                src="/three-dots.svg"
+                alt="three-dots"
+                width={20}
+                height={20}
+              />
+              {/* <MoreHorizontal className="h-4 w-4" strokeWidth={2} /> */}
             </button>
             {menuOpen && (
               <div className="absolute right-0 z-20 mt-1 w-44 rounded-lg border border-gray-200 bg-white p-1 shadow-lg">

@@ -1,22 +1,22 @@
-import { Sparkles } from "lucide-react";
+import Image from "next/image";
 
-const EmptyState = ({ pageName = "Summary" }) => {
+const EmptyState = ({ pageName: _pageName = "Summary" }) => {
   return (
-    <div className="flex h-full min-h-[360px] flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300 bg-white p-8 text-center">
-      <div className="mb-4 rounded-full bg-indigo-50 p-3 text-indigo-600">
-        <Sparkles className="h-5 w-5" />
-      </div>
-      <p className="text-sm font-medium text-gray-700">{pageName}</p>
-      <p className="mt-1 max-w-md text-xs text-gray-500">
-        Generate will create content for this page from transcript context.
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 py-10 text-center">
+      <Image
+        src="/instant-recording-placeholder.svg"
+        alt=""
+        width={119}
+        height={91}
+        unoptimized
+        className="mb-6 h-auto w-[119px] max-w-full shrink-0"
+      />
+      <p className="max-w-md text-sm leading-relaxed text-gray-400">
+        Lorem ipsum dolor sit amet consectetur. Vitae
       </p>
-      <button
-        type="button"
-        disabled
-        className="mt-5 rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        Generate
-      </button>
+      <p className="mt-1 max-w-md text-sm leading-relaxed text-gray-400">
+        gravida sed duis consectetur pharetra dignissim sem.
+      </p>
     </div>
   );
 };

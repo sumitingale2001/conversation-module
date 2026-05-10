@@ -39,7 +39,7 @@ const PresetDropdown = ({
         {children}
       </span>
       {open && (
-        <div className="absolute right-0 z-20 mt-2 w-56 rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
+        <div className="absolute  z-20 mt-2 w-56 rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
           <button
             type="button"
             onClick={() => {

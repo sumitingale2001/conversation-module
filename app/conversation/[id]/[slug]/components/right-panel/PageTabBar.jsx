@@ -10,30 +10,30 @@ const PageTabBar = ({
   onOpenManagePresets,
 }) => {
   return (
-    <div className="sticky top-0 z-10 border-b border-gray-200 bg-white px-4 py-2">
-      <div className="flex items-center gap-2">
-        <div className="flex-1 overflow-x-auto">
-          <div className="flex min-w-max items-center gap-1">
-            {pages.map((page) => {
-              const isActive = page._id === activePageId;
-              return (
-                <button
-                  key={page._id}
-                  type="button"
-                  onClick={() => onTabClick(page._id)}
-                  className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
-                    isActive
-                      ? "bg-indigo-50 font-medium text-indigo-700"
-                      : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-                  }`}
-                >
-                  {page.name}
-                </button>
-              );
-            })}
-          </div>
+    <div className="sticky top-0 z-10 flex min-w-0 items-center gap-2 bg-white px-4 py-2 text-[12px] leading-[16px]">
+      <div className="min-w-0 max-w-full overflow-x-auto [&::-webkit-scrollbar]:hidden">
+        <div className="flex min-w-max items-center gap-2">
+          {pages.map((page) => {
+            const isActive = page._id === activePageId;
+            return (
+              <button
+                key={page._id}
+                type="button"
+                onClick={() => onTabClick(page._id)}
+                className={`cursor-pointer rounded-full px-3 py-1.5 text-[12px] leading-[16px] transition-colors ${
+                  isActive
+                    ? "bg-[#EFEEFC] font-medium text-[#1C1C92]"
+                    : "bg-transparent text-gray-500 hover:bg-gray-50 hover:text-gray-600"
+                }`}
+              >
+                {page.name}
+              </button>
+            );
+          })}
         </div>
+      </div>
 
+      <div className="shrink-0">
         <PresetDropdown
           onCreateCustomPage={onCreateCustomPage}
           onCreateFromPreset={onCreateFromPreset}
@@ -41,10 +41,10 @@ const PageTabBar = ({
         >
           <button
             type="button"
-            className="rounded-md border border-gray-200 p-1.5 text-gray-600 hover:bg-gray-100"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#EFEEFC] text-[12px] leading-[16px] text-[#1C1C92] transition-colors hover:opacity-90"
             aria-label="Create page"
           >
-            <Plus className="h-4 w-4" />
+            <Plus className="h-4 w-4" strokeWidth={2} />
           </button>
         </PresetDropdown>
       </div>

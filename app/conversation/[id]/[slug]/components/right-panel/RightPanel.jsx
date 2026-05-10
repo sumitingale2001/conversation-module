@@ -12,6 +12,7 @@ import PageTabBar from "./PageTabBar";
 import StaleRefreshBanner from "./StaleRefreshBanner";
 import TiptapPageEditor from "./editor/TiptapPageEditor";
 import ManagePresetModal from "./preset/ManagePresetModal";
+import { userId, workspaceId } from "@/utils/conversation.utils";
 
 const buildLocalPage = (payload, position) => ({
   _id: `local-${Date.now()}-${position}`,
@@ -29,7 +30,6 @@ const buildLocalPage = (payload, position) => ({
 
 const RightPanel = () => {
   const conversation = useConversationStore((state) => state.conversation);
-  const workspaceId = conversation?.workspaceId;
   const conversationId = conversation?._id;
 
   const [pages, setPages] = useState([createFallbackSummaryPage()]);
@@ -71,7 +71,12 @@ const RightPanel = () => {
     setPages((prev) => [...prev, localPage]);
     setActivePageId(localPage._id);
 
-    const created = await createPage({ workspaceId, conversationId, payload });
+    const created = await createPage({
+      workspaceId,
+      conversationId,
+      payload,
+      userId,
+    });
     if (created?._id) {
       setPages((prev) =>
         prev.map((p) => (p._id === localPage._id ? created : p)),
@@ -143,7 +148,17 @@ const RightPanel = () => {
 
       <div className="flex min-h-0 flex-1 flex-col p-4">
         {activePage.content === null ? (
-          <EmptyState pageName={activePage.name} />
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
+            <PageHeader
+              page={activePage}
+              editorText={plainText}
+              onRename={handleRename}
+              onDelete={handleDeletePage}
+              onLinkCanvas={() => {}}
+              onOpenManagePresets={() => setManagePresetsOpen(true)}
+            />
+            <EmptyState pageName={activePage.name} />
+          </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white">
             <PageHeader
