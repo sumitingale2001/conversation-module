@@ -1,6 +1,12 @@
-import { Copy, FileText } from "lucide-react";
-import Image from "next/image";
-import { useEffect, useState } from "react";
+import {
+  Copy,
+  FileText,
+  Link2,
+  MoreHorizontal,
+  Settings2,
+  Trash2,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 const PageHeader = ({
   page,
@@ -12,6 +18,18 @@ const PageHeader = ({
   const [isEditing, setIsEditing] = useState(false);
   const [nameDraft, setNameDraft] = useState(page?.name || "");
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [menuOpen]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- sync local draft when page.name updates externally
@@ -98,52 +116,53 @@ const PageHeader = ({
             <Copy className="h-4 w-4" strokeWidth={2} />
           </button>
 
-          <div className="relative">
+          <div className="relative" ref={menuRef}>
             <button
               type="button"
               onClick={() => setMenuOpen((prev) => !prev)}
-              className="rounded-md p-1.5 text-[#1C1C92] hover:bg-gray-100"
+              className="rounded-md p-1.5 text-[#1A1A1A] hover:bg-gray-100"
               aria-label="Open page actions"
+              aria-expanded={menuOpen}
             >
-              <Image
-                src="/three-dots.svg"
-                alt="three-dots"
-                width={20}
-                height={20}
-              />
-              {/* <MoreHorizontal className="h-4 w-4" strokeWidth={2} /> */}
+              <MoreHorizontal className="h-5 w-5" strokeWidth={2} />
             </button>
             {menuOpen && (
-              <div className="absolute right-0 z-20 mt-1 w-44 rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
+              <div
+                className="absolute right-0 z-20 mt-2 flex min-w-[220px] flex-col gap-2 rounded-xl bg-white p-4 shadow-[0_4px_20px_rgba(0,0,0,0.1)]"
+                role="menu"
+              >
                 <button
                   type="button"
+                  role="menuitem"
                   onClick={() => {
                     setMenuOpen(false);
                     onLinkCanvas();
                   }}
-                  className="w-full rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+                  className="flex w-full items-center gap-3 rounded-lg py-1 text-left text-[12px] leading-5 text-gray-600  outline-none hover:bg-gray-50 cursor-pointer"
                 >
+                  <Link2
+                    className="h-4 w-4 shrink-0"
+                    strokeWidth={2}
+                    aria-hidden
+                  />
                   Link to canvas
                 </button>
+
                 <button
                   type="button"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onOpenManagePresets();
-                  }}
-                  className="w-full rounded px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
-                >
-                  Manage presets
-                </button>
-                <button
-                  type="button"
+                  role="menuitem"
                   onClick={() => {
                     setMenuOpen(false);
                     onDelete();
                   }}
-                  className="w-full rounded px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                  className="flex w-full items-center gap-3 rounded-lg py-1 text-left text-[12px] leading-5 text-gray-600  outline-none hover:bg-gray-50 cursor-pointer"
                 >
-                  Delete page
+                  <Trash2
+                    className="h-4 w-4 shrink-0"
+                    strokeWidth={2}
+                    aria-hidden
+                  />
+                  Move to Trash
                 </button>
               </div>
             )}

@@ -31,24 +31,84 @@ const buildLocalPage = (payload, position) => ({
   updatedAt: new Date().toISOString(),
 });
 
+function mergePagesFromServer(prev, incoming) {
+  const map = new Map();
+  for (const p of incoming) {
+    map.set(String(p._id), p);
+  }
+
+  const hasRealSummary = [...map.values()].some(
+    (x) => x.type === "summary" && String(x._id) !== "local-summary",
+  );
+
+  for (const p of prev) {
+    const id = String(p._id);
+    if (id === "local-summary" && hasRealSummary) continue;
+    if (!map.has(id)) map.set(id, p);
+  }
+
+  return Array.from(map.values()).sort(
+    (a, b) => (Number(a.position) ?? 0) - (Number(b.position) ?? 0),
+  );
+}
+
 const RightPanel = () => {
   const conversation = useConversationStore((state) => state.conversation);
   const conversationId = conversation?._id;
 
-  const [pages, setPages] = useState([createFallbackSummaryPage()]);
-  const [activePageId, setActivePageId] = useState("local-summary");
+  // ✅ Single state object so pages and activePageId are ALWAYS updated
+  // together in one setState call — eliminating any render where they
+  // can be out of sync with each other.
+  const [state, setState] = useState({
+    pages: [createFallbackSummaryPage()],
+    activePageId: "local-summary",
+  });
+
+  const { pages, activePageId } = state;
+
   const [plainText, setPlainText] = useState("");
   const [managePresetsOpen, setManagePresetsOpen] = useState(false);
   const [createPresetOpen, setCreatePresetOpen] = useState(false);
   const saveTimeoutRef = useRef(null);
+
+  const setPages = useCallback((updater) => {
+    setState((prev) => ({
+      ...prev,
+      pages: typeof updater === "function" ? updater(prev.pages) : updater,
+    }));
+  }, []);
+
+  const setActivePageId = useCallback((activePageId) => {
+    setState((prev) => ({ ...prev, activePageId }));
+  }, []);
+
+  const setPageState = useCallback((pages, activePageId) => {
+    setState({ pages, activePageId });
+  }, []);
+
+  const selectPageTab = useCallback((pageId) => {
+    setState((prev) => ({ ...prev, activePageId: pageId }));
+  }, []);
 
   useEffect(() => {
     let ignore = false;
     (async () => {
       const incomingPages = await getPages({ workspaceId, conversationId });
       if (ignore) return;
-      setPages(incomingPages);
-      setActivePageId((prev) => prev || incomingPages[0]?._id);
+
+      setState((prev) => {
+        const merged = mergePagesFromServer(prev.pages, incomingPages);
+        const intent = prev.activePageId;
+
+        const intentExistsInMerged = merged.some(
+          (p) => String(p._id) === String(intent),
+        );
+        const isLocalIntent = String(intent).startsWith("local-");
+        const shouldKeepIntent = intentExistsInMerged || isLocalIntent;
+        const nextActiveId = shouldKeepIntent ? intent : (merged[0]?._id ?? "");
+
+        return { pages: merged, activePageId: nextActiveId };
+      });
     })();
     return () => {
       ignore = true;
@@ -56,7 +116,7 @@ const RightPanel = () => {
   }, [workspaceId, conversationId]);
 
   const activePage = useMemo(
-    () => pages.find((page) => page._id === activePageId) || pages[0] || null,
+    () => pages.find((page) => page._id === activePageId) ?? null,
     [pages, activePageId],
   );
 
@@ -74,13 +134,15 @@ const RightPanel = () => {
     let localPage;
     let apiPosition = 0;
 
-    setPages((prev) => {
-      apiPosition = prepend ? 0 : prev.length;
+    // ✅ pages and activePageId updated atomically in one setState
+    setState((prev) => {
+      apiPosition = prepend ? 0 : prev.pages.length;
       localPage = buildLocalPage(payload, apiPosition);
-      return prepend ? [localPage, ...prev] : [...prev, localPage];
+      const nextPages = prepend
+        ? [localPage, ...prev.pages]
+        : [...prev.pages, localPage];
+      return { pages: nextPages, activePageId: localPage._id };
     });
-
-    setActivePageId(localPage._id);
 
     const created = await createPage({
       workspaceId,
@@ -88,11 +150,13 @@ const RightPanel = () => {
       payload: { ...payload, position: apiPosition },
       userId,
     });
+
     if (created?._id) {
-      setPages((prev) =>
-        prev.map((p) => (p._id === localPage._id ? created : p)),
-      );
-      setActivePageId(created._id);
+      // ✅ Swap local → real page and update activePageId atomically
+      setState((prev) => ({
+        pages: prev.pages.map((p) => (p._id === localPage._id ? created : p)),
+        activePageId: created._id,
+      }));
     }
   };
 
@@ -108,10 +172,7 @@ const RightPanel = () => {
 
   const handleRename = (nextName) => {
     if (!activePage) return;
-    if (
-      activePage.type === "summary" ||
-      activePage._id === "local-summary"
-    ) {
+    if (activePage.type === "summary" || activePage._id === "local-summary") {
       return;
     }
     setPages((prev) =>
@@ -148,38 +209,42 @@ const RightPanel = () => {
       const ok = await deletePage({ workspaceId, conversationId, pageId });
       if (!ok) return;
     }
-    const nextPages = pages.filter((page) => page._id !== pageId);
-    setPages(nextPages);
-    setActivePageId(nextPages[0]?._id || "");
+    setState((prev) => {
+      const nextPages = prev.pages.filter((page) => page._id !== pageId);
+      const fallback = nextPages[0]?._id || "";
+      return { pages: nextPages, activePageId: fallback };
+    });
   };
 
-  if (!activePage) return null;
+  const tabBarProps = {
+    pages,
+    activePageId: activePage?._id ?? activePageId,
+    onTabClick: selectPageTab,
+    onCreateCustomPage: () =>
+      createAndSelectPage({ name: "New page", type: "custom", content: null }),
+    onCreatePreset: () => setCreatePresetOpen(true),
+    onCreateSummaryPage: handleCreateSummaryPage,
+    onCreateFromPreset: (preset) =>
+      createAndSelectPage({
+        name: preset.name,
+        type: "preset",
+        presetId: preset._id,
+        content: null,
+      }),
+    onOpenManagePresets: () => setManagePresetsOpen(true),
+  };
+
+  if (!activePage) {
+    return (
+      <div className="flex h-full flex-col bg-gray-50">
+        <PageTabBar {...tabBarProps} />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col bg-gray-50">
-      <PageTabBar
-        pages={pages}
-        activePageId={activePage._id}
-        onTabClick={setActivePageId}
-        onCreateCustomPage={() =>
-          createAndSelectPage({
-            name: "New page",
-            type: "custom",
-            content: null,
-          })
-        }
-        onCreatePreset={() => setCreatePresetOpen(true)}
-        onCreateSummaryPage={handleCreateSummaryPage}
-        onCreateFromPreset={(preset) =>
-          createAndSelectPage({
-            name: preset.name,
-            type: "preset",
-            presetId: preset._id,
-            content: null,
-          })
-        }
-        onOpenManagePresets={() => setManagePresetsOpen(true)}
-      />
+      <PageTabBar {...tabBarProps} />
 
       <div className="flex min-h-0 flex-1 flex-col px-4">
         {activePage.content === null && activePage.type !== "custom" ? (

@@ -135,3 +135,19 @@ export const removePreset = async ({ workspaceId, presetId }) => {
     return false;
   }
 };
+
+/** PATCH …/presets/reorder — returns sorted preset list when successful */
+export const reorderPresets = async ({ workspaceId, presetIds }) => {
+  if (!workspaceId || !Array.isArray(presetIds)) return null;
+  if (presetIds.length === 0) return [];
+  try {
+    const { data } = await apiInstance.patch(
+      `/summary-page/workspaces/${workspaceId}/presets/reorder`,
+      { presetIds },
+    );
+    return Array.isArray(data?.data) ? data.data : null;
+  } catch (error) {
+    console.warn("[right-panel] reorderPresets failed", error);
+    return null;
+  }
+};

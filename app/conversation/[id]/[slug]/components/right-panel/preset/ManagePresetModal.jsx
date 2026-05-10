@@ -6,46 +6,117 @@ import {
   createPreset,
   getPresets,
   removePreset,
+  reorderPresets,
   updatePreset,
 } from "../pageApi";
 import PresetFormModal from "./PresetFormModal";
 import { userId } from "@/utils/conversation.utils";
+import {
+  EMPTY_HIDDEN_PRESET_IDS,
+  SUMMARY_MENU_ITEM_ID,
+  usePresetDropdownVisibilityStore,
+} from "@/store/presetDropdownVisibility.store";
+
+const isSummaryPreset = (p) =>
+  p?.type === "summary" ||
+  (typeof p?.name === "string" && p.name.trim().toLowerCase() === "summary");
 
 const ManagePresetModal = ({ open, workspaceId, onClose }) => {
   const [presets, setPresets] = useState([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [editingPreset, setEditingPreset] = useState(null);
-  /** UI-only selection for checkboxes until a preset toggle API exists */
-  const [presetChecked, setPresetChecked] = useState({});
+  const [dragId, setDragId] = useState(null);
+
+  const hiddenPresetIds = usePresetDropdownVisibilityStore((s) => {
+    if (!workspaceId) return EMPTY_HIDDEN_PRESET_IDS;
+    return (
+      s.hiddenPresetIdsByWorkspace[String(workspaceId)] ??
+      EMPTY_HIDDEN_PRESET_IDS
+    );
+  });
+  const togglePresetHidden = usePresetDropdownVisibilityStore(
+    (s) => s.toggleHidden,
+  );
+  const setPresetHidden = usePresetDropdownVisibilityStore((s) => s.setHidden);
+  const removePresetEntry = usePresetDropdownVisibilityStore(
+    (s) => s.removePresetEntry,
+  );
 
   const loadPresets = useCallback(async () => {
     const list = await getPresets({ workspaceId });
     setPresets(list);
-    setPresetChecked((prev) => {
-      const next = { ...prev };
-      for (const p of list) {
-        if (next[p._id] === undefined) next[p._id] = true;
-      }
-      return next;
-    });
+    return list;
   }, [workspaceId]);
 
   useEffect(() => {
     if (!open) return;
-    loadPresets();
-  }, [open, loadPresets]);
+    let cancelled = false;
+    void getPresets({ workspaceId }).then((list) => {
+      if (!cancelled) setPresets(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, workspaceId]);
 
   const handleEditPreset = async (preset) => {
     const list = await getPresets({ workspaceId });
     const fresh = list.find((p) => p._id === preset._id) ?? preset;
     setEditingPreset(fresh);
+    
   };
 
-  const togglePresetChecked = (presetId) => {
-    setPresetChecked((prev) => ({
-      ...prev,
-      [presetId]: !prev[presetId],
-    }));
+  const summaryPreset = presets.find(isSummaryPreset);
+  const otherPresets = presets.filter((p) => !isSummaryPreset(p));
+
+  const onDropOn = useCallback(
+    async (targetId) => {
+      if (dragId == null || dragId === targetId) {
+        setDragId(null);
+        return;
+      }
+      const ids = otherPresets.map((p) => String(p._id));
+      const from = ids.indexOf(dragId);
+      const to = ids.indexOf(targetId);
+      if (from < 0 || to < 0) {
+        setDragId(null);
+        return;
+      }
+      const next = [...ids];
+      next.splice(from, 1);
+      next.splice(to, 0, dragId);
+      setDragId(null);
+
+      const updated = await reorderPresets({ workspaceId, presetIds: next });
+      if (Array.isArray(updated)) {
+        setPresets(updated);
+      } else {
+        await loadPresets();
+      }
+    },
+    [dragId, otherPresets, workspaceId, loadPresets],
+  );
+
+  const handleEditSummary = async () => {
+    const list = await getPresets({ workspaceId });
+    const fresh = list.find(isSummaryPreset) ?? summaryPreset;
+    if (fresh) setEditingPreset(fresh);
+  };
+
+  const handleDeleteSummary = async () => {
+    if (!summaryPreset?._id) {
+      setPresetHidden(workspaceId, SUMMARY_MENU_ITEM_ID, true);
+      return;
+    }
+    const ok = await removePreset({
+      workspaceId,
+      presetId: summaryPreset._id,
+    });
+    if (ok) {
+      removePresetEntry(workspaceId, summaryPreset._id);
+      removePresetEntry(workspaceId, SUMMARY_MENU_ITEM_ID);
+      loadPresets();
+    }
   };
 
   if (!open) return null;
@@ -92,15 +163,19 @@ const ManagePresetModal = ({ open, workspaceId, onClose }) => {
           <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-200">
             <div className="flex items-center gap-1.5 border-b border-gray-100 px-2 py-1.5">
               <GripVertical
-                className="h-3.5 w-3.5 shrink-0 text-gray-300"
+                className="h-3.5 w-3.5 shrink-0 cursor-grab text-gray-400 active:cursor-grabbing"
                 aria-hidden
               />
               <input
                 type="checkbox"
-                checked
-                disabled
+                checked={
+                  !hiddenPresetIds.includes(String(SUMMARY_MENU_ITEM_ID))
+                }
+                onChange={() =>
+                  togglePresetHidden(workspaceId, SUMMARY_MENU_ITEM_ID)
+                }
                 className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 accent-[#1C1C92]"
-                aria-label="Summary preset"
+                aria-label="Show Summary in new page menu"
               />
               <span className="min-w-0 flex-1 truncate text-xs text-gray-700">
                 Summary
@@ -108,26 +183,37 @@ const ManagePresetModal = ({ open, workspaceId, onClose }) => {
               <div className="flex shrink-0 items-center gap-0.5">
                 <button
                   type="button"
-                  disabled
-                  className="rounded p-0.5 text-gray-300"
-                  aria-label="Edit summary (locked)"
+                  onClick={() => void handleEditSummary()}
+                  className="rounded p-0.5 text-gray-500 hover:bg-gray-100"
+                  aria-label="Edit Summary preset"
                 >
                   <Pencil className="h-3 w-3" />
                 </button>
                 <button
                   type="button"
-                  disabled
-                  className="rounded p-0.5 text-gray-300"
-                  aria-label="Delete summary (locked)"
+                  onClick={() => void handleDeleteSummary()}
+                  className="rounded p-0.5 text-gray-500 hover:bg-red-50 hover:text-red-600"
+                  aria-label="Delete Summary preset"
                 >
                   <Trash2 className="h-3 w-3" />
                 </button>
               </div>
             </div>
 
-            {presets.map((preset) => (
+            {otherPresets.map((preset) => (
               <div
                 key={preset._id}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = "move";
+                  setDragId(String(preset._id));
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                }}
+                onDrop={() => void onDropOn(String(preset._id))}
+                onDragEnd={() => setDragId(null)}
                 className="flex items-center gap-1.5 border-b border-gray-100 px-2 py-1.5 last:border-b-0"
               >
                 <GripVertical
@@ -136,10 +222,11 @@ const ManagePresetModal = ({ open, workspaceId, onClose }) => {
                 />
                 <input
                   type="checkbox"
-                  checked={presetChecked[preset._id] ?? true}
-                  onChange={() => togglePresetChecked(preset._id)}
+                  draggable={false}
+                  checked={!hiddenPresetIds.includes(String(preset._id))}
+                  onChange={() => togglePresetHidden(workspaceId, preset._id)}
                   className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 accent-[#1C1C92]"
-                  aria-label={`Select ${preset.name}`}
+                  aria-label={`Show ${preset.name} in new page menu`}
                 />
                 <span className="min-w-0 flex-1 truncate text-xs text-gray-700">
                   {preset.name}
@@ -147,6 +234,7 @@ const ManagePresetModal = ({ open, workspaceId, onClose }) => {
                 <div className="flex shrink-0 items-center gap-0.5">
                   <button
                     type="button"
+                    draggable={false}
                     onClick={() => handleEditPreset(preset)}
                     className="rounded p-0.5 text-gray-500 hover:bg-gray-100"
                     aria-label={`Edit ${preset.name}`}
@@ -155,12 +243,16 @@ const ManagePresetModal = ({ open, workspaceId, onClose }) => {
                   </button>
                   <button
                     type="button"
+                    draggable={false}
                     onClick={async () => {
                       const ok = await removePreset({
                         workspaceId,
                         presetId: preset._id,
                       });
-                      if (ok) loadPresets();
+                      if (ok) {
+                        removePresetEntry(workspaceId, preset._id);
+                        loadPresets();
+                      }
                     }}
                     className="rounded p-0.5 text-gray-500 hover:bg-red-50 hover:text-red-600"
                     aria-label={`Delete ${preset.name}`}
@@ -196,7 +288,6 @@ const ManagePresetModal = ({ open, workspaceId, onClose }) => {
             workspaceId,
             presetId: editingPreset._id,
             payload,
-            userId,
           });
           setEditingPreset(null);
           loadPresets();
