@@ -95,12 +95,12 @@ export const getPresets = async ({ workspaceId }) => {
   }
 };
 
-export const createPreset = async ({ workspaceId, payload }) => {
+export const createPreset = async ({ workspaceId, payload, userId }) => {
   if (!workspaceId) return null;
   try {
     const { data } = await apiInstance.post(
       `/summary-page/workspaces/${workspaceId}/presets`,
-      payload,
+      { ...payload, userId, workspaceId },
     );
     return data?.data || null;
   } catch (error) {
