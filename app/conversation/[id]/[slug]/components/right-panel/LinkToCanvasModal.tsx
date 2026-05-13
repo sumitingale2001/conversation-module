@@ -28,7 +28,8 @@ import ViewList from "@mui/icons-material/ViewList";
 import ViewModule from "@mui/icons-material/ViewModule";
 import { addCanvasLinks, getWorkspaceCanvases } from "./pageApi";
 
-const PRIMARY = "#1C1C92";
+/** Primary / filled actions — matches Figma (Link to modal) */
+const PRIMARY = "#302387";
 
 const checkboxSx = {
   color: PRIMARY,
@@ -36,11 +37,11 @@ const checkboxSx = {
 };
 
 const outlinedControlSx = {
-  borderColor: PRIMARY,
-  color: PRIMARY,
+  borderColor: "#D1D5DB",
+  color: "#374151",
   "&:hover": {
-    borderColor: PRIMARY,
-    backgroundColor: "rgba(28, 28, 146, 0.06)",
+    borderColor: "#9CA3AF",
+    backgroundColor: "rgba(0, 0, 0, 0.04)",
   },
 };
 
@@ -159,9 +160,7 @@ export default function LinkToCanvasModal({
   const filtered = React.useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return normalizedRows;
-    return normalizedRows.filter((row) =>
-      row.name.toLowerCase().includes(q),
-    );
+    return normalizedRows.filter((row) => row.name.toLowerCase().includes(q));
   }, [normalizedRows, search]);
 
   const sortedRows = React.useMemo(() => {
@@ -179,10 +178,7 @@ export default function LinkToCanvasModal({
         return mul * (ea - eb);
       }
       /* size — placeholder compares formatted string MB */
-      return (
-        mul *
-        formatFileSize(a.raw).localeCompare(formatFileSize(b.raw))
-      );
+      return mul * formatFileSize(a.raw).localeCompare(formatFileSize(b.raw));
     });
     return out;
   }, [filtered, sortKey, sortDir]);
@@ -249,27 +245,30 @@ export default function LinkToCanvasModal({
     <Dialog
       open={open}
       onClose={handleDialogClose}
-      maxWidth="md"
-      fullWidth
+      maxWidth={false}
       slotProps={{
         paper: {
           sx: {
+            width: "80vw",
+            maxWidth: "80vw",
+            height: "80vh",
+            maxHeight: "80vh",
             borderRadius: "12px",
             bgcolor: "#fff",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
           },
         },
       }}
     >
-      <DialogTitle sx={{ pb: 1 }}>
+      <DialogTitle sx={{ pb: 1, flexShrink: 0 }}>
         <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2 }}>
           <Box>
             <Typography variant="h6" component="span" sx={{ fontWeight: 700 }}>
               Link to
             </Typography>
-            <Typography
-              variant="body2"
-              sx={{ color: "#6b7280", mt: 0.5 }}
-            >
+            <Typography variant="body2" sx={{ color: "#6b7280", mt: 0.5 }}>
               Select sources that you would like to move
             </Typography>
           </Box>
@@ -279,24 +278,43 @@ export default function LinkToCanvasModal({
               if (!submitting) onClose();
             }}
             size="small"
-            sx={{ color: PRIMARY }}
+            sx={{ color: "#9CA3AF" }}
           >
             <Close />
           </IconButton>
         </Box>
       </DialogTitle>
 
-      <DialogContent sx={{ pt: 0, px: 3, pb: 0 }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 2 }}>
+      <DialogContent
+        sx={{
+          pt: 0,
+          px: 3,
+          pb: 0,
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+      >
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 1.5,
+            mb: 2,
+            flexShrink: 0,
+          }}
+        >
           <OutlinedInput
-            fullWidth
             placeholder="Search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             size="small"
             sx={{
-              borderRadius: "999px",
+              borderRadius: "10px",
               bgcolor: "#F5F5F5",
+              width: "40%",
               pr: 0.5,
               "& .MuiOutlinedInput-notchedOutline": {
                 border: "none",
@@ -313,7 +331,7 @@ export default function LinkToCanvasModal({
             }}
             startAdornment={
               <InputAdornment position="start" sx={{ pl: 1 }}>
-                <Search sx={{ fontSize: 20, color: PRIMARY }} />
+                <Search sx={{ fontSize: 20, color: "#9CA3AF" }} />
               </InputAdornment>
             }
             endAdornment={
@@ -323,7 +341,7 @@ export default function LinkToCanvasModal({
                     aria-label="Clear search"
                     size="small"
                     onClick={() => setSearch("")}
-                    sx={{ color: PRIMARY }}
+                    sx={{ color: "#9CA3AF" }}
                   >
                     <Clear fontSize="small" />
                   </IconButton>
@@ -349,11 +367,8 @@ export default function LinkToCanvasModal({
                 ...outlinedControlSx,
                 borderRadius: "8px",
                 border: "1px solid",
-                borderColor: PRIMARY,
-                bgcolor:
-                  viewMode === "list"
-                    ? "rgba(28, 28, 146, 0.08)"
-                    : "transparent",
+                borderColor: "#D1D5DB",
+                bgcolor: viewMode === "list" ? "#F3F4F6" : "transparent",
               }}
             >
               <ViewList fontSize="small" />
@@ -366,11 +381,8 @@ export default function LinkToCanvasModal({
                 ...outlinedControlSx,
                 borderRadius: "8px",
                 border: "1px solid",
-                borderColor: PRIMARY,
-                bgcolor:
-                  viewMode === "grid"
-                    ? "rgba(28, 28, 146, 0.08)"
-                    : "transparent",
+                borderColor: "#D1D5DB",
+                bgcolor: viewMode === "grid" ? "#F3F4F6" : "transparent",
               }}
             >
               <ViewModule fontSize="small" />
@@ -378,15 +390,19 @@ export default function LinkToCanvasModal({
             <Button
               size="small"
               variant="outlined"
-              endIcon={<ExpandMore sx={{ color: PRIMARY }} />}
+              endIcon={<ExpandMore sx={{ color: "#374151" }} />}
               aria-controls={sortAnchor ? "link-to-sort-menu" : undefined}
               aria-haspopup="true"
               onClick={(e) => setSortAnchor(e.currentTarget)}
               sx={{
                 textTransform: "none",
-                color: PRIMARY,
-                borderColor: PRIMARY,
+                color: "#374151",
+                borderColor: "#D1D5DB",
                 borderRadius: "8px",
+                "&:hover": {
+                  borderColor: "#9CA3AF",
+                  backgroundColor: "rgba(0, 0, 0, 0.04)",
+                },
               }}
             >
               Sort
@@ -422,24 +438,32 @@ export default function LinkToCanvasModal({
         {/* Column headers */}
         <Box
           sx={{
-            display:
-              viewMode === "grid" ? "none" : "grid",
-            gridTemplateColumns:
-              "40px minmax(0, 1fr) 140px 100px 40px",
+            display: viewMode === "grid" ? "none" : "grid",
+            gridTemplateColumns: "40px minmax(0, 1fr) 140px 100px 40px",
             alignItems: "center",
             mb: 1,
             px: 0,
             columnGap: 1,
+            flexShrink: 0,
           }}
         >
           <Box />
-          <Typography variant="body2" sx={{ fontWeight: 600, color: "grey.700" }}>
+          <Typography
+            variant="body2"
+            sx={{ fontWeight: 600, color: "grey.700" }}
+          >
             Name {sortKey === "name" ? arrow : "↓"}
           </Typography>
-          <Typography variant="body2" sx={{ fontWeight: 600, color: "grey.700", textAlign: "center" }}>
+          <Typography
+            variant="body2"
+            sx={{ fontWeight: 600, color: "grey.700", textAlign: "center" }}
+          >
             Creation date {sortKey === "createdAt" ? arrow : "↓"}
           </Typography>
-          <Typography variant="body2" sx={{ fontWeight: 600, color: "grey.700", textAlign: "center" }}>
+          <Typography
+            variant="body2"
+            sx={{ fontWeight: 600, color: "grey.700", textAlign: "center" }}
+          >
             File size {sortKey === "size" ? arrow : "↓"}
           </Typography>
           <Box />
@@ -450,7 +474,7 @@ export default function LinkToCanvasModal({
             Loading canvases…
           </Typography>
         ) : viewMode === "list" ? (
-          <Box sx={{ maxHeight: 360, overflowY: "auto", pr: 0.25 }}>
+          <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto", pr: 0.25 }}>
             {sortedRows.map((row) => {
               const checked = selected.includes(row.id);
               const star = Boolean(row.starred);
@@ -489,7 +513,9 @@ export default function LinkToCanvasModal({
                         minWidth: 0,
                       }}
                     >
-                      <EditNote sx={{ color: PRIMARY, fontSize: 22, flexShrink: 0 }} />
+                      <EditNote
+                        sx={{ color: PRIMARY, fontSize: 22, flexShrink: 0 }}
+                      />
                       <Typography
                         variant="body2"
                         sx={{ fontWeight: 700 }}
@@ -499,10 +525,16 @@ export default function LinkToCanvasModal({
                         {row.name || "Canvas"}
                       </Typography>
                     </Box>
-                    <Typography variant="body2" sx={{ color: "grey.900", textAlign: "center" }}>
+                    <Typography
+                      variant="body2"
+                      sx={{ color: "grey.900", textAlign: "center" }}
+                    >
                       {formatCreatedAtDdMmYyyy(row.createdAt)}
                     </Typography>
-                    <Typography variant="body2" sx={{ color: "grey.900", textAlign: "center" }}>
+                    <Typography
+                      variant="body2"
+                      sx={{ color: "grey.900", textAlign: "center" }}
+                    >
                       {formatFileSize(row.raw)}
                     </Typography>
                     <Box sx={{ display: "flex", justifyContent: "center" }}>
@@ -523,7 +555,8 @@ export default function LinkToCanvasModal({
               display: "grid",
               gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
               gap: 1.5,
-              maxHeight: 360,
+              flex: 1,
+              minHeight: 0,
               overflowY: "auto",
               py: 0.25,
             }}
@@ -570,15 +603,36 @@ export default function LinkToCanvasModal({
                       minWidth: 0,
                     }}
                   >
-                    <EditNote sx={{ color: PRIMARY, fontSize: 22, flexShrink: 0 }} />
-                    <Typography variant="body2" sx={{ fontWeight: 700 }} noWrap title={row.name}>
+                    <EditNote
+                      sx={{ color: PRIMARY, fontSize: 22, flexShrink: 0 }}
+                    />
+                    <Typography
+                      variant="body2"
+                      sx={{ fontWeight: 700 }}
+                      noWrap
+                      title={row.name}
+                    >
                       {row.name || "Canvas"}
                     </Typography>
                   </Box>
-                  <Typography variant="caption" sx={{ color: "grey.700", display: "block", textAlign: "center" }}>
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "grey.700",
+                      display: "block",
+                      textAlign: "center",
+                    }}
+                  >
                     {formatCreatedAtDdMmYyyy(row.createdAt)}
                   </Typography>
-                  <Typography variant="caption" sx={{ color: "grey.700", display: "block", textAlign: "center" }}>
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "grey.700",
+                      display: "block",
+                      textAlign: "center",
+                    }}
+                  >
                     {formatFileSize(row.raw)}
                   </Typography>
                 </Paper>
@@ -598,34 +652,55 @@ export default function LinkToCanvasModal({
           alignItems: "center",
           gap: 2,
           flexWrap: "wrap",
+          flexShrink: 0,
         }}
       >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", minWidth: 0 }}>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            flexWrap: "wrap",
+            minWidth: 0,
+          }}
+        >
           <ArticleOutlined sx={{ fontSize: 22, color: "#616161" }} />
           <Typography variant="body2" component="span" sx={{ fontWeight: 600 }}>
             {pageName}
           </Typography>
-          <Typography variant="body2" component="span" sx={{ fontStyle: "italic", color: "#6b7280" }}>
+          <Typography
+            variant="body2"
+            component="span"
+            sx={{ fontStyle: "italic", color: "#6b7280" }}
+          >
             linked to
           </Typography>
           {firstLinked ? (
             <>
               <EditNote sx={{ fontSize: 22, color: PRIMARY }} />
-              <Typography variant="body2" component="span" sx={{ fontWeight: 500 }}>
+              <Typography
+                variant="body2"
+                component="span"
+                sx={{ fontWeight: 500 }}
+              >
                 {firstLinked.name}
               </Typography>
               {moreCount > 0 ? (
                 <Typography
                   variant="body2"
                   component="span"
-                  sx={{ fontWeight: 500, color: "#1976D2" }}
+                  sx={{ fontWeight: 500, color: PRIMARY }}
                 >
                   +{moreCount} more
                 </Typography>
               ) : null}
             </>
           ) : (
-            <Typography variant="body2" component="span" sx={{ color: "grey.600" }}>
+            <Typography
+              variant="body2"
+              component="span"
+              sx={{ color: "grey.600" }}
+            >
               No canvases selected
             </Typography>
           )}
@@ -641,7 +716,8 @@ export default function LinkToCanvasModal({
             px: 3,
             textTransform: "none",
             boxShadow: "none",
-            "&:hover": { bgcolor: PRIMARY, opacity: 0.92 },
+            "&:hover": { bgcolor: "#261d6f", boxShadow: "none" },
+            "&.Mui-disabled": { bgcolor: "#c4c2d4", color: "#fff" },
           }}
         >
           Confirm
