@@ -38,16 +38,143 @@ const formatTimer = (seconds) => {
   return `${h}:${m}:${s}`;
 };
 
-const generateTicks = (totalDuration, count = 11) => {
-  if (!totalDuration || totalDuration <= 0) {
-    return Array.from({ length: count }, (_, i) =>
-      (0.31 + i * 0.054).toFixed(2),
-    );
+/** ~8–12 “nice” steps between major ruler ticks (seconds). */
+function pickNiceRulerStep(totalSec, maxTicks = 12) {
+  if (!Number.isFinite(totalSec) || totalSec <= 0) return 0.5;
+  const raw = totalSec / maxTicks;
+  const pow10 = 10 ** Math.floor(Math.log10(Math.max(raw, 1e-9)));
+  const n = raw / pow10;
+  let m = 10;
+  if (n <= 1) m = 1;
+  else if (n <= 2) m = 2;
+  else if (n <= 5) m = 5;
+  return m * pow10;
+}
+
+/**
+ * `effectiveTotalDuration` can be `Infinity` when the API omits segment end/duration.
+ * Ruler + scrub clamp need a finite length; fall back to summed segment timeline lengths.
+ */
+function finitePlaybackTimelineSec(
+  conversation,
+  segments,
+  orderedSegments,
+  segmentMetaDurationById,
+) {
+  const eff = effectiveTotalDuration(conversation, segments);
+  if (Number.isFinite(eff) && eff > 0 && eff < 1e15) return eff;
+  let accEnd = 0;
+  const list =
+    orderedSegments?.length > 0 ? orderedSegments : segments || [];
+  for (const seg of list) {
+    const stRaw = Number(seg.startTime);
+    const timelineStart =
+      Number.isFinite(stRaw) && stRaw >= accEnd ? stRaw : accEnd;
+    const dur = segmentDurationSecForTimeline(seg, segmentMetaDurationById);
+    accEnd = timelineStart + dur;
   }
-  return Array.from({ length: count }, (_, i) =>
-    ((totalDuration / (count - 1)) * i).toFixed(1),
-  );
-};
+  return accEnd > 0 ? accEnd : 0;
+}
+
+const RULER_MAJOR_STEP_TARGET = 0.05;
+const RULER_MAX_MAJOR_DIVS = 220;
+/** Reference: labels every 0.05 s; four small ticks between → 0.01 s fine grid. */
+const RULER_LABEL_STEP = 0.05;
+const RULER_FINE_STEP_DENSE = 0.01;
+const RULER_MAX_FINE_TICKS = 2200;
+
+function rulerLabelStepSec(totalSec) {
+  if (!Number.isFinite(totalSec) || totalSec <= 0) return RULER_MAJOR_STEP_TARGET;
+  const nAt05 = Math.ceil(totalSec / RULER_MAJOR_STEP_TARGET);
+  if (nAt05 <= RULER_MAX_MAJOR_DIVS) return RULER_MAJOR_STEP_TARGET;
+  return pickNiceRulerStep(totalSec, RULER_MAX_MAJOR_DIVS);
+}
+
+function pickRulerFineAndLabelStep(totalSec) {
+  if (!Number.isFinite(totalSec) || totalSec <= 0) {
+    return { fineStep: RULER_FINE_STEP_DENSE, labelStep: RULER_LABEL_STEP };
+  }
+  const nFine = Math.ceil(totalSec / RULER_FINE_STEP_DENSE);
+  if (nFine <= RULER_MAX_FINE_TICKS) {
+    return { fineStep: RULER_FINE_STEP_DENSE, labelStep: RULER_LABEL_STEP };
+  }
+  let labelStep = rulerLabelStepSec(totalSec);
+  let fineStep =
+    labelStep >= 0.1 - 1e-9
+      ? labelStep / 5
+      : RULER_MAJOR_STEP_TARGET;
+  // "Nice" often yields 0.2s here; prefer 0, 0.5, 1, 1.5… with 0.1 minors (matches product ref).
+  const wantsHalfLabels =
+    (Math.abs(labelStep - 0.2) < 1e-6 ||
+      (labelStep >= 0.15 - 1e-9 && labelStep < 0.45)) &&
+    Math.ceil(totalSec / 0.5) <= 400;
+  if (wantsHalfLabels) {
+    labelStep = 0.5;
+    fineStep = 0.1;
+  }
+  return { fineStep, labelStep };
+}
+
+function isNearlyMultiple(sec, step) {
+  if (!Number.isFinite(sec) || !Number.isFinite(step) || step <= 0) return false;
+  const q = sec / step;
+  return Math.abs(q - Math.round(q)) < 1e-4;
+}
+
+function formatRulerMajorLabel(sec, totalSec, labelStep) {
+  if (!Number.isFinite(sec)) return "";
+  if (labelStep <= 0.05 + 1e-9) return sec.toFixed(2);
+  if (labelStep >= 0.5 - 1e-9 && labelStep < 1.5) {
+    const t = (Math.round(sec * 10) / 10).toFixed(1);
+    return t.endsWith(".0") ? t.slice(0, -2) : t;
+  }
+  if (totalSec < 60) return sec.toFixed(1);
+  const m = Math.floor(sec / 60);
+  const s = sec - m * 60;
+  return `${m}:${String(Math.floor(s + 0.5)).padStart(2, "0")}`;
+}
+
+/**
+ * Dense: labels every 0.05 s, fine 0.01 (four minors per 0.05). Coarse: if "nice" would be
+ * ~0.2 s labels, use 0.5 / 0.1 instead (0, 0.5, 1, 1.5, …) when label count stays reasonable.
+ */
+function buildRulerTickMarks(totalSec) {
+  if (!Number.isFinite(totalSec) || totalSec <= 0) {
+    return [
+      {
+        key: "0",
+        sec: 0,
+        tier: "label",
+        label: "0.00",
+      },
+    ];
+  }
+  const { fineStep, labelStep } = pickRulerFineAndLabelStep(totalSec);
+  const items = [];
+  const stepCs = Math.max(1, Math.round(fineStep * 100));
+  const maxI = Math.min(120_000, Math.ceil(totalSec / fineStep) + 2);
+  for (let i = 0; i <= maxI; i++) {
+    const sec = Math.min((i * stepCs) / 100, totalSec);
+    const labeled = isNearlyMultiple(sec, labelStep);
+    const medium =
+      !labeled &&
+      labelStep < 0.5 - 1e-9 &&
+      fineStep >= 0.05 - 1e-9 &&
+      labelStep >= 0.1 - 1e-9 &&
+      isNearlyMultiple(sec, labelStep / 2);
+    const tier = labeled ? "label" : medium ? "mid" : "sub";
+    const label =
+      tier === "label" ? formatRulerMajorLabel(sec, totalSec, labelStep) : "";
+    items.push({
+      key: `t-${i}`,
+      sec,
+      tier,
+      label,
+    });
+    if (sec >= totalSec - 1e-9) break;
+  }
+  return items;
+}
 
 /** Bar geometry in CSS pixels (canvas + STATE 3 — uniform bar width) */
 const BAR_W_CSS = 2.5;
@@ -123,10 +250,7 @@ function drawState3WaveformBars(seg, widthPx, peaks512) {
       h = 10 + amp * 82;
     } else {
       const seed = seg._id.charCodeAt(i % seg._id.length);
-      h =
-        22 +
-        Math.abs(Math.sin(i * 0.55 + seed * 0.02)) * 48 +
-        (seed % 14);
+      h = 22 + Math.abs(Math.sin(i * 0.55 + seed * 0.02)) * 48 + (seed % 14);
     }
     return (
       <div
@@ -240,7 +364,14 @@ const State3ActivePlaybackProgress = memo(
   },
 );
 
-const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
+const StaticWaveform = ({
+  mediaStream,
+  pendingName,
+  onPendingNameChange,
+  playbackScrubTo,
+  playbackSeekCommit,
+  playbackPause,
+}) => {
   const canvasRef = useRef(null);
   const requestRef = useRef(null);
   const audioContextRef = useRef(null);
@@ -295,11 +426,19 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
     markerId: null,
     el: null,
   });
+  const [timelineRulerDragging, setTimelineRulerDragging] = useState(false);
   const tagHoverLeaveTimerRef = useRef(null);
   const state3ViewportRef = useRef(null);
   const state3TrackRef = useRef(null);
+  const timelineViewportRef = useRef(null);
+  const timelineTrackRef = useRef(null);
   const fetchedSegmentMetaIdsRef = useRef(new Set());
   const waveformDecodeInflightRef = useRef(new Set());
+  const timelineScrubSessionRef = useRef(null);
+  const timelinePointerIdRef = useRef(null);
+  const timelineWheelCommitTimerRef = useRef(null);
+  const timelineWheelWasPlayingRef = useRef(false);
+  const timelineWheelBurstRef = useRef(false);
 
   const clearTagHoverTimer = useCallback(() => {
     if (tagHoverLeaveTimerRef.current) {
@@ -316,19 +455,161 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
   }, [clearTagHoverTimer]);
 
   const isLive = !!(mediaStream && mediaStream.getAudioTracks().length > 0);
-  const totalDuration = conversation?.totalDuration || 0;
-  const timelineEndForTicks =
-    totalDuration > 0
-      ? totalDuration
-      : Math.min(
-          effectiveTotalDuration(conversation, segments),
-          Number.MAX_SAFE_INTEGER,
-        );
-  const ticks = generateTicks(
-    Number.isFinite(timelineEndForTicks) && timelineEndForTicks < 1e15
-      ? timelineEndForTicks
-      : totalDuration,
+  const timelineTotalSec = useMemo(
+    () =>
+      finitePlaybackTimelineSec(
+        conversation,
+        segments,
+        orderedSegments,
+        segmentMetaDurationById,
+      ),
+    [conversation, segments, orderedSegments, segmentMetaDurationById],
   );
+  const timelineRulerMarks = useMemo(
+    () => buildRulerTickMarks(timelineTotalSec),
+    [timelineTotalSec],
+  );
+  const timelineRulerWidthPx = useMemo(
+    () => Math.max(1, Math.round(timelineTotalSec * TIMELINE_PX_PER_SEC)),
+    [timelineTotalSec],
+  );
+
+  const canTimelineScrub =
+    !isLive &&
+    orderedSegments.length > 0 &&
+    (segments?.some((s) => s.fileUrl) ?? false) &&
+    typeof playbackScrubTo === "function" &&
+    typeof playbackSeekCommit === "function";
+
+  const applyPlaybackTrackTransforms = useCallback(() => {
+    const t = useConversationStore.getState().currentTime || 0;
+    const applyOne = (vp, tr) => {
+      if (!vp || !tr) return;
+      const centerX = vp.offsetWidth / 2;
+      tr.style.transform = `translate3d(${centerX - t * TIMELINE_PX_PER_SEC}px, 0, 0)`;
+    };
+    applyOne(state3ViewportRef.current, state3TrackRef.current);
+    applyOne(timelineViewportRef.current, timelineTrackRef.current);
+  }, []);
+
+  const clampGlobalTime = useCallback(
+    (t) => {
+      const total = finitePlaybackTimelineSec(
+        conversation,
+        segments,
+        orderedSegments,
+        segmentMetaDurationById,
+      );
+      if (!Number.isFinite(total) || total <= 0) return Math.max(0, t);
+      return Math.max(0, Math.min(t, total));
+    },
+    [conversation, segments, orderedSegments, segmentMetaDurationById],
+  );
+
+  const onTimelinePointerDown = useCallback(
+    (e) => {
+      if (!canTimelineScrub || e.button !== 0) return;
+      e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      timelinePointerIdRef.current = e.pointerId;
+      const st = useConversationStore.getState();
+      timelineScrubSessionRef.current = {
+        startX: e.clientX,
+        startT: st.currentTime || 0,
+        wasPlaying: st.isPlaying,
+      };
+      if (st.isPlaying) playbackPause?.();
+      setTimelineRulerDragging(true);
+    },
+    [canTimelineScrub, playbackPause],
+  );
+
+  const onTimelinePointerMove = useCallback(
+    (e) => {
+      if (timelinePointerIdRef.current !== e.pointerId) return;
+      const sess = timelineScrubSessionRef.current;
+      if (!sess) return;
+      const newT = clampGlobalTime(
+        sess.startT - (e.clientX - sess.startX) / TIMELINE_PX_PER_SEC,
+      );
+      playbackScrubTo(newT);
+    },
+    [clampGlobalTime, playbackScrubTo],
+  );
+
+  const onTimelinePointerUp = useCallback(
+    (e) => {
+      if (timelinePointerIdRef.current !== e.pointerId) return;
+      const sess = timelineScrubSessionRef.current;
+      timelineScrubSessionRef.current = null;
+      timelinePointerIdRef.current = null;
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        /* already released */
+      }
+      setTimelineRulerDragging(false);
+      if (!sess) return;
+      const finalT = clampGlobalTime(
+        sess.startT - (e.clientX - sess.startX) / TIMELINE_PX_PER_SEC,
+      );
+      void playbackSeekCommit(finalT, sess.wasPlaying);
+    },
+    [clampGlobalTime, playbackSeekCommit],
+  );
+
+  const onTimelineLostPointerCapture = useCallback(() => {
+    const sess = timelineScrubSessionRef.current;
+    timelineScrubSessionRef.current = null;
+    timelinePointerIdRef.current = null;
+    setTimelineRulerDragging(false);
+    if (!sess) return;
+    const finalT = clampGlobalTime(
+      useConversationStore.getState().currentTime || 0,
+    );
+    void playbackSeekCommit(finalT, sess.wasPlaying);
+  }, [clampGlobalTime, playbackSeekCommit]);
+
+  const onTimelineWheel = useCallback(
+    (e) => {
+      if (!canTimelineScrub) return;
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+      e.preventDefault();
+      const st = useConversationStore.getState();
+      if (!timelineWheelBurstRef.current) {
+        timelineWheelBurstRef.current = true;
+        timelineWheelWasPlayingRef.current = st.isPlaying;
+        if (st.isPlaying) playbackPause?.();
+      }
+      const next = clampGlobalTime(
+        (st.currentTime || 0) - e.deltaX / TIMELINE_PX_PER_SEC,
+      );
+      playbackScrubTo(next);
+      window.clearTimeout(timelineWheelCommitTimerRef.current);
+      timelineWheelCommitTimerRef.current = window.setTimeout(() => {
+        timelineWheelCommitTimerRef.current = null;
+        const resume = timelineWheelWasPlayingRef.current;
+        timelineWheelBurstRef.current = false;
+        const t2 = clampGlobalTime(
+          useConversationStore.getState().currentTime || 0,
+        );
+        void playbackSeekCommit(t2, resume);
+      }, 160);
+    },
+    [
+      canTimelineScrub,
+      clampGlobalTime,
+      playbackPause,
+      playbackScrubTo,
+      playbackSeekCommit,
+    ],
+  );
+
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(timelineWheelCommitTimerRef.current);
+    };
+  }, []);
 
   const state3TrackLayout = useMemo(() => {
     if (!orderedSegments?.length) return [];
@@ -408,12 +689,7 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
     return () => {
       cancelled = true;
     };
-  }, [
-    isLive,
-    state3TrackLayout,
-    segmentPeaksById,
-    setSegmentMetaDuration,
-  ]);
+  }, [isLive, state3TrackLayout, segmentPeaksById, setSegmentMetaDuration]);
   useEffect(() => {
     if (segments?.length) {
       const sorted = [...segments].sort(
@@ -458,25 +734,17 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
   // After segment widths / metadata settle, sync track translate before paint (avoids one-frame collapse).
   useLayoutEffect(() => {
     if (isLive || orderedSegments.length === 0) return;
-    const vp = state3ViewportRef.current;
-    const tr = state3TrackRef.current;
-    if (!vp || !tr) return;
-    const t = useConversationStore.getState().currentTime || 0;
-    const centerX = vp.offsetWidth / 2;
-    tr.style.transform = `translate3d(${centerX - t * TIMELINE_PX_PER_SEC}px, 0, 0)`;
-  }, [isLive, orderedSegments.length, state3TrackLayout]);
+    applyPlaybackTrackTransforms();
+  }, [isLive, orderedSegments.length, state3TrackLayout, timelineRulerWidthPx, applyPlaybackTrackTransforms]);
 
   useEffect(() => {
     if (isLive || orderedSegments.length === 0) return;
     const vp = state3ViewportRef.current;
+    const tvp = timelineViewportRef.current;
     if (!vp) return;
     let rafId;
     const apply = () => {
-      const tr = state3TrackRef.current;
-      if (!tr) return;
-      const t = useConversationStore.getState().currentTime || 0;
-      const centerX = vp.offsetWidth / 2;
-      tr.style.transform = `translate3d(${centerX - t * TIMELINE_PX_PER_SEC}px, 0, 0)`;
+      applyPlaybackTrackTransforms();
     };
     const loop = () => {
       apply();
@@ -491,6 +759,7 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
           })
         : null;
     ro?.observe(vp);
+    if (tvp) ro?.observe(tvp);
     if (playbackIsPlaying) {
       rafId = requestAnimationFrame(loop);
     } else {
@@ -505,19 +774,15 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
     orderedSegments.length,
     playbackIsPlaying,
     state3TrackLayout.length,
+    timelineRulerWidthPx,
+    applyPlaybackTrackTransforms,
   ]);
 
   // Paused / seek: sync track translate without subscribing parent to currentTime (avoids re-rendering all chips).
   useEffect(() => {
     if (isLive || orderedSegments.length === 0) return;
-    const vp = state3ViewportRef.current;
-    const tr = state3TrackRef.current;
-    if (!vp || !tr) return;
     const apply = () => {
-      const st = useConversationStore.getState();
-      const t = st.currentTime || 0;
-      const centerX = vp.offsetWidth / 2;
-      tr.style.transform = `translate3d(${centerX - t * TIMELINE_PX_PER_SEC}px, 0, 0)`;
+      applyPlaybackTrackTransforms();
     };
     const unsub = useConversationStore.subscribe((state, prev) => {
       if (state.isPlaying) return;
@@ -530,7 +795,7 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
     });
     apply();
     return () => unsub();
-  }, [isLive, orderedSegments.length]);
+  }, [isLive, orderedSegments.length, timelineRulerWidthPx, applyPlaybackTrackTransforms]);
 
   useEffect(() => {
     if (!isLive) {
@@ -1313,25 +1578,66 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
         </>
       )}
 
-      {/* ── TIMELINE RULER ───────────────────────────────────────────── */}
-      <div className="mt-2 flex flex-col gap-1 px-0">
-        <div className="flex h-2 items-end justify-between border-x border-gray-200/90">
-          {Array.from({ length: 11 }).map((_, i) => (
-            <div
-              key={i}
-              className={`w-px bg-gray-300/90 ${i % 5 === 0 ? "h-full" : "h-1/2"}`}
-            />
-          ))}
-        </div>
-        <div className="flex justify-between text-[10px] font-medium tabular-nums text-gray-500">
-          {ticks.map((t, i) => (
-            <span
-              key={i}
-              className="w-8 text-center first:text-left last:text-right"
-            >
-              {t}
-            </span>
-          ))}
+      {/* ── TIMELINE RULER: width ∝ total duration; same translate as waveform (center playhead) ── */}
+      <div
+        ref={timelineViewportRef}
+        className={`mt-2 w-full overflow-hidden px-0 ${
+          canTimelineScrub
+            ? timelineRulerDragging
+              ? "cursor-grabbing touch-pan-y"
+              : "cursor-grab touch-pan-y"
+            : ""
+        }`}
+        onPointerDown={onTimelinePointerDown}
+        onPointerMove={onTimelinePointerMove}
+        onPointerUp={onTimelinePointerUp}
+        onPointerCancel={onTimelinePointerUp}
+        onLostPointerCapture={onTimelineLostPointerCapture}
+        onWheel={onTimelineWheel}
+      >
+        <div
+          ref={timelineTrackRef}
+          className="relative h-[34px] shrink-0 will-change-transform border-x border-gray-200/90"
+          style={{ width: timelineRulerWidthPx }}
+        >
+          {timelineRulerMarks.map(({ key, sec, tier, label }) => {
+            const leftPx = sec * TIMELINE_PX_PER_SEC;
+            const isFirstLabel = tier === "label" && sec <= 1e-6;
+            const isLastLabel =
+              tier === "label" &&
+              sec >= timelineTotalSec - 1e-6 &&
+              timelineTotalSec > 0;
+            const tickH =
+              tier === "label" ? "h-2" : tier === "mid" ? "h-1.5" : "h-1";
+            return (
+              <div
+                key={key}
+                className="pointer-events-none absolute top-0 flex flex-col"
+                style={{
+                  left: leftPx,
+                  transform:
+                    tier === "label" && isFirstLabel
+                      ? "translateX(0)"
+                      : tier === "label" && isLastLabel
+                        ? "translateX(-100%)"
+                        : "translateX(-50%)",
+                  alignItems:
+                    tier === "label" && isFirstLabel
+                      ? "flex-start"
+                      : tier === "label" && isLastLabel
+                        ? "flex-end"
+                        : "center",
+                }}
+              >
+                <div className={`w-px shrink-0 bg-gray-300/90 ${tickH}`} />
+                {tier === "label" && label ? (
+                  <span className="mt-0.5 whitespace-nowrap text-[10px] font-medium tabular-nums text-gray-500">
+                    {label}
+                  </span>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

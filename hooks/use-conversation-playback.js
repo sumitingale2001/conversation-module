@@ -362,6 +362,30 @@ export function useConversationPlayback() {
     [loadAudioAtGlobalTime, setPlaybackState],
   );
 
+  /** Absolute seek: loads correct segment + offset; `resumePlaying` restores play after scrub. */
+  const seekToGlobalTime = useCallback(
+    (globalSec, resumePlaying) => {
+      const state = useConversationStore.getState();
+      const total = effectiveTotalDuration(state.conversation, state.segments);
+      const next = Math.max(0, Math.min(Number(globalSec) || 0, total));
+      return loadAudioAtGlobalTime(next, Boolean(resumePlaying)).then(() => {
+        if (!resumePlaying) {
+          audioRef.current?.pause();
+          setPlaybackState({ isPlaying: false });
+        }
+      });
+    },
+    [loadAudioAtGlobalTime, setPlaybackState],
+  );
+
+  /** UI-only head move (no audio decode) — for timeline drag scrub between commits. */
+  const scrubPlaybackUiTo = useCallback(
+    (globalSec) => {
+      pushPlaybackUi(globalSec);
+    },
+    [pushPlaybackUi],
+  );
+
   const stopPlayback = useCallback(() => {
     audioRef.current?.pause();
     setPlaybackState({ isPlaying: false });
@@ -375,5 +399,7 @@ export function useConversationPlayback() {
     skipBack: () => seekBy(-5),
     skipForward: () => seekBy(5),
     stopPlayback,
+    seekToGlobalTime,
+    scrubPlaybackUiTo,
   };
 }

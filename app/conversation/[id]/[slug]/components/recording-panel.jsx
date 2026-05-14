@@ -61,8 +61,14 @@ const RecordingPanel = ({
     restartRecordingWithDevice,
     mediaStream,
   } = useRecordingStore();
-  const { togglePlayPause, skipBack, skipForward, stopPlayback } =
-    useConversationPlayback();
+  const {
+    togglePlayPause,
+    skipBack,
+    skipForward,
+    stopPlayback,
+    seekToGlobalTime,
+    scrubPlaybackUiTo,
+  } = useConversationPlayback();
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
   const [speedPopoverOpen, setSpeedPopoverOpen] = useState(false);
   const [restartDialogOpen, setRestartDialogOpen] = useState(false);
@@ -256,6 +262,9 @@ const RecordingPanel = ({
             mediaStream={mediaStream}
             pendingName={pendingName}
             onPendingNameChange={onPendingNameChange}
+            playbackScrubTo={scrubPlaybackUiTo}
+            playbackSeekCommit={seekToGlobalTime}
+            playbackPause={stopPlayback}
           />
         </div>
       </div>
