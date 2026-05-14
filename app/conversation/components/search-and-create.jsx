@@ -14,6 +14,16 @@ const menuItemSx = {
     }
 };
 
+/** When `File.type` is missing (common for multi-select / OS), allow known extensions. */
+const AUDIO_FILE_EXTENSION = /\.(mp3|wav|m4a|aac|flac|ogg|opus|webm|wma|aiff?|caf)$/i;
+
+function isLikelyAudioFile(file) {
+    if (!file) return false;
+    if (file.type?.startsWith("audio/")) return true;
+    if (file.type) return false;
+    return AUDIO_FILE_EXTENSION.test(file.name || "");
+}
+
 
 const Add = () => {
     const [anchorEl, setAnchorEl] = useState(null);
@@ -56,8 +66,11 @@ const Add = () => {
         }
     }
 
-    const handleSourceFileUpload = async (file) => {
+    const handleSourceFilesUpload = async (files) => {
         if (isUploadingSource) return;
+        const audioFiles = Array.from(files || []).filter(isLikelyAudioFile);
+        if (audioFiles.length === 0) return;
+
         setIsUploadingSource(true);
 
         try {
@@ -72,30 +85,32 @@ const Add = () => {
 
             const conversationId = createRes.data._id;
 
-            const formData = new FormData();
-            formData.append("file", file);
-            formData.append("conversationId", conversationId);
-            formData.append("workspaceId", workspaceId);
+            for (const file of audioFiles) {
+                const formData = new FormData();
+                formData.append("file", file);
+                formData.append("conversationId", conversationId);
+                formData.append("workspaceId", workspaceId);
 
-            const uploadRes = await apiInstance.post("/uploads/audio", formData, {
-                headers: { "Content-Type": "multipart/form-data" },
-            });
+                const uploadRes = await apiInstance.post("/uploads/audio", formData, {
+                    headers: { "Content-Type": "multipart/form-data" },
+                });
 
-            if (!uploadRes?.data?.success || !uploadRes?.data?.fileUrl) {
-                throw new Error("Upload failed.");
-            }
+                if (!uploadRes?.data?.success || !uploadRes?.data?.fileUrl) {
+                    throw new Error("Upload failed.");
+                }
 
-            const appendRes = await conversationServices.appendSegment({
-                conversationId,
-                workspaceId,
-                fileUrl: uploadRes.data.fileUrl,
-                duration: 0,
-                startTime: 0,
-                endTime: 0,
-            });
+                const appendRes = await conversationServices.appendSegment({
+                    conversationId,
+                    workspaceId,
+                    fileUrl: uploadRes.data.fileUrl,
+                    duration: 0,
+                    startTime: 0,
+                    endTime: 0,
+                });
 
-            if (!appendRes?.success) {
-                throw new Error(appendRes?.error || "Failed to append segment.");
+                if (!appendRes?.success) {
+                    throw new Error(appendRes?.error || "Failed to append segment.");
+                }
             }
 
             router.push(`/conversation/${conversationId}/upload`);
@@ -107,16 +122,17 @@ const Add = () => {
     };
 
     const handleFileSelect = async (event) => {
-        const file = event.target.files?.[0];
-        if (!file) return;
+        const selected = event.target.files;
+        if (!selected?.length) return;
 
-        if (!file.type.startsWith("audio/")) {
-            event.target.value = "";
-            return;
-        }
-
-        await handleSourceFileUpload(file);
+        // Snapshot File objects before clearing the input — resetting `value` clears
+        // the live FileList in browsers, which would skip the upload flow.
+        const audioFiles = Array.from(selected).filter(isLikelyAudioFile);
         event.target.value = "";
+
+        if (audioFiles.length === 0) return;
+
+        await handleSourceFilesUpload(audioFiles);
     };
 
     return (
@@ -161,6 +177,7 @@ const Add = () => {
             <input
                 type="file"
                 accept="audio/*"
+                multiple
                 ref={fileInputRef}
                 onChange={handleFileSelect}
                 style={{ display: "none" }}
