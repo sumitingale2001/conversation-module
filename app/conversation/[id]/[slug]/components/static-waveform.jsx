@@ -49,65 +49,196 @@ const generateTicks = (totalDuration, count = 11) => {
   );
 };
 
-/** Bar geometry in CSS pixels (canvas scales with container × DPR) */
-const BAR_W_CSS = 2;
+/** Bar geometry in CSS pixels (canvas + STATE 3 — uniform bar width) */
+const BAR_W_CSS = 2.5;
 const GAP_CSS = 0.85;
 
 const WAVEFORM_BG = "#E3E3E4";
 const BAR_FILL = "#979797";
 
-/** STATE 3 pseudo-waveform — flex bars fill 100% of segment inner width (no intrinsic bar strip width). */
-function drawState3WaveformBars(seg, widthPx) {
-  const barSlots = Math.min(
-    96,
-    Math.max(24, Math.floor(Math.max(8, widthPx) / 3)),
-  );
-  return Array.from({ length: barSlots }).map((_, i) => {
-    const seed = seg._id.charCodeAt(i % seg._id.length);
-    const h =
-      22 +
-      Math.abs(Math.sin(i * 0.55 + seed * 0.02)) * 48 +
-      (seed % 14);
+/** Figma: waveform strip height (px) */
+const STATE3_WAVEFORM_H_PX = 70;
+
+/** How many RMS/max samples to take along the decoded buffer (resampled per bar count in UI). */
+const WAVEFORM_DECODE_BINS = 512;
+
+/** Linear resample peaks[i] for i in 0..nBars-1 */
+function resamplePeakAt(peaks, i, nBars) {
+  if (!peaks?.length) return 0.35;
+  if (nBars <= 1) return peaks[Math.floor(peaks.length / 2)] ?? 0.35;
+  const t = i / (nBars - 1);
+  const x = t * (peaks.length - 1);
+  const i0 = Math.floor(x);
+  const i1 = Math.min(peaks.length - 1, i0 + 1);
+  const f = x - i0;
+  return peaks[i0] * (1 - f) + peaks[i1] * f;
+}
+
+/** Decode segment audio and return normalized peak envelope (0..1) + PCM duration. */
+async function decodeSegmentWaveformPeaks512(fileUrl) {
+  const res = await fetch(fileUrl, { mode: "cors" });
+  if (!res.ok) throw new Error(`fetch ${res.status}`);
+  const raw = await res.arrayBuffer();
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) throw new Error("no AudioContext");
+  const ctx = new Ctx();
+  try {
+    const buf = await ctx.decodeAudioData(raw.slice(0));
+    const dur = buf.duration;
+    const ch0 = buf.getChannelData(0);
+    const ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : null;
+    const bins = WAVEFORM_DECODE_BINS;
+    const binW = Math.max(1, Math.floor(ch0.length / bins));
+    const peaks = new Float32Array(bins);
+    for (let b = 0; b < bins; b++) {
+      const s0 = b * binW;
+      const s1 = Math.min(ch0.length, s0 + binW);
+      let m = 0;
+      for (let j = s0; j < s1; j++) {
+        const a = Math.abs(ch0[j]);
+        const b2 = ch1 ? Math.abs(ch1[j]) : 0;
+        m = Math.max(m, a, b2);
+      }
+      peaks[b] = m;
+    }
+    let mx = 1e-8;
+    for (let b = 0; b < bins; b++) mx = Math.max(mx, peaks[b]);
+    for (let b = 0; b < bins; b++) peaks[b] /= mx;
+    return { peaks: Array.from(peaks), durationSec: dur };
+  } finally {
+    await ctx.close();
+  }
+}
+
+/** STATE 3 pseudo-waveform — fixed bar width; gap stretches edge-to-edge; heights from decoded peaks when available. */
+function drawState3WaveformBars(seg, widthPx, peaks512) {
+  const innerW = Math.max(1, widthPx - 4);
+  let n = Math.floor((innerW + GAP_CSS) / (BAR_W_CSS + GAP_CSS));
+  n = Math.min(480, Math.max(1, n));
+
+  const buildBar = (i, barW) => {
+    let h;
+    if (Array.isArray(peaks512) && peaks512.length > 0) {
+      const amp = resamplePeakAt(peaks512, i, n);
+      h = 10 + amp * 82;
+    } else {
+      const seed = seg._id.charCodeAt(i % seg._id.length);
+      h =
+        22 +
+        Math.abs(Math.sin(i * 0.55 + seed * 0.02)) * 48 +
+        (seed % 14);
+    }
     return (
       <div
         key={`${seg._id}-bar-${i}`}
-        className="max-h-[92%] min-h-[2px] min-w-0 flex-1 basis-0 rounded-[1px]"
+        className="max-h-[92%] min-h-[2px] shrink-0 self-center rounded-[1px]"
         style={{
+          width: barW,
+          minWidth: barW,
+          maxWidth: barW,
           height: `${h}%`,
           backgroundColor: BAR_FILL,
         }}
       />
     );
-  });
+  };
+
+  if (n <= 1) {
+    let hOne = 45;
+    if (Array.isArray(peaks512) && peaks512.length > 0) {
+      let s = 0;
+      for (let k = 0; k < peaks512.length; k++) s += peaks512[k];
+      hOne = 10 + (s / peaks512.length) * 82;
+    } else {
+      const seed = seg._id.charCodeAt(0);
+      hOne = 22 + Math.abs(Math.sin(seed * 0.02)) * 48 + (seed % 14);
+    }
+    return {
+      bars: [
+        <div
+          key={`${seg._id}-bar-0`}
+          className="max-h-[92%] min-h-[2px] shrink-0 self-center rounded-[1px]"
+          style={{
+            width: innerW,
+            minWidth: innerW,
+            maxWidth: innerW,
+            height: `${hOne}%`,
+            backgroundColor: BAR_FILL,
+          }}
+        />,
+      ],
+      waveGapPx: 0,
+    };
+  }
+
+  let gapPx = (innerW - n * BAR_W_CSS) / (n - 1);
+  const GAP_MIN = 0.35;
+  while (n > 1 && gapPx < GAP_MIN) {
+    n -= 1;
+    gapPx = n <= 1 ? 0 : (innerW - n * BAR_W_CSS) / (n - 1);
+  }
+
+  if (n <= 1) {
+    let hOne = 45;
+    if (Array.isArray(peaks512) && peaks512.length > 0) {
+      let s = 0;
+      for (let k = 0; k < peaks512.length; k++) s += peaks512[k];
+      hOne = 10 + (s / peaks512.length) * 82;
+    } else {
+      const seed = seg._id.charCodeAt(0);
+      hOne = 22 + Math.abs(Math.sin(seed * 0.02)) * 48 + (seed % 14);
+    }
+    return {
+      bars: [
+        <div
+          key={`${seg._id}-bar-0`}
+          className="max-h-[92%] min-h-[2px] shrink-0 self-center rounded-[1px]"
+          style={{
+            width: innerW,
+            minWidth: innerW,
+            maxWidth: innerW,
+            height: `${hOne}%`,
+            backgroundColor: BAR_FILL,
+          }}
+        />,
+      ],
+      waveGapPx: 0,
+    };
+  }
+
+  const bars = Array.from({ length: n }, (_, i) => buildBar(i, BAR_W_CSS));
+  return { bars, waveGapPx: gapPx };
 }
 
 /** Local playback progress line — ONLY mount under active segment; subscribes to global time. */
-const State3ActivePlaybackProgress = memo(function State3ActivePlaybackProgress({
-  timelineStart,
-  durationSec,
-  segmentId,
-}) {
-  const currentTime = useConversationStore((s) => s.currentTime);
-  const playbackSegmentId = useConversationStore((s) => s.playbackSegmentId);
-  if (String(playbackSegmentId) !== String(segmentId)) return null;
-  if (!Number.isFinite(durationSec) || durationSec <= 0) return null;
-  const local = Math.max(
-    0,
-    Math.min((currentTime || 0) - timelineStart, durationSec),
-  );
-  const pct = (local / durationSec) * 100;
-  return (
-    <div
-      className="pointer-events-none absolute inset-y-0 z-[32] w-0.5 bg-[#1C1C92]/90"
-      style={{
-        left: `${pct}%`,
-        transform: "translateX(-50%)",
-        boxShadow: "0 0 4px rgba(28,28,146,0.35)",
-      }}
-      aria-hidden
-    />
-  );
-});
+const State3ActivePlaybackProgress = memo(
+  function State3ActivePlaybackProgress({
+    timelineStart,
+    durationSec,
+    segmentId,
+  }) {
+    const currentTime = useConversationStore((s) => s.currentTime);
+    const playbackSegmentId = useConversationStore((s) => s.playbackSegmentId);
+    if (String(playbackSegmentId) !== String(segmentId)) return null;
+    if (!Number.isFinite(durationSec) || durationSec <= 0) return null;
+    const local = Math.max(
+      0,
+      Math.min((currentTime || 0) - timelineStart, durationSec),
+    );
+    const pct = (local / durationSec) * 100;
+    return (
+      <div
+        className="pointer-events-none absolute inset-y-0 z-[32] w-0.5 bg-[#1C1C92]/90"
+        style={{
+          left: `${pct}%`,
+          transform: "translateX(-50%)",
+          boxShadow: "0 0 4px rgba(28,28,146,0.35)",
+        }}
+        aria-hidden
+      />
+    );
+  },
+);
 
 const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
   const canvasRef = useRef(null);
@@ -151,6 +282,8 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
 
   // Drag reorder state
   const [orderedSegments, setOrderedSegments] = useState([]);
+  /** Decoded amplitude envelope per segment (512 bins, 0..1) — drives bar heights. */
+  const [segmentPeaksById, setSegmentPeaksById] = useState({});
   const [dragIndex, setDragIndex] = useState(null);
   const [dragOverIndex, setDragOverIndex] = useState(null);
   const [isReordering, setIsReordering] = useState(false);
@@ -166,6 +299,7 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
   const state3ViewportRef = useRef(null);
   const state3TrackRef = useRef(null);
   const fetchedSegmentMetaIdsRef = useRef(new Set());
+  const waveformDecodeInflightRef = useRef(new Set());
 
   const clearTagHoverTimer = useCallback(() => {
     if (tagHoverLeaveTimerRef.current) {
@@ -221,18 +355,65 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
             m.timestamp >= timelineStart - 1e-3 && m.timestamp <= en + 1e-3
           );
         });
+        const { bars, waveGapPx } = drawState3WaveformBars(
+          seg,
+          widthPx,
+          segmentPeaksById[String(seg._id)],
+        );
         return {
           segId: String(seg._id),
-          bars: drawState3WaveformBars(seg, widthPx),
+          bars,
+          waveGapPx,
           markersHere,
           timelineStart,
           durationSec,
         };
       },
     );
-  }, [state3TrackLayout, markers]);
+  }, [state3TrackLayout, markers, segmentPeaksById]);
 
-  // Sync ordered segments from store
+  // Decode each segment file to real peaks + authoritative duration (width ∝ duration, heights ∝ amplitude).
+  useEffect(() => {
+    if (isLive || !state3TrackLayout.length) return;
+    let cancelled = false;
+    const run = async () => {
+      for (const { seg } of state3TrackLayout) {
+        const id = String(seg._id);
+        if (!seg.fileUrl || id in segmentPeaksById) continue;
+        if (waveformDecodeInflightRef.current.has(id)) continue;
+        waveformDecodeInflightRef.current.add(id);
+        try {
+          const { peaks, durationSec } = await decodeSegmentWaveformPeaks512(
+            seg.fileUrl,
+          );
+          if (cancelled) return;
+          if (Number.isFinite(durationSec) && durationSec > 0) {
+            setSegmentMetaDuration(id, durationSec);
+          }
+          setSegmentPeaksById((prev) => {
+            if (Object.hasOwn(prev, id)) return prev;
+            return { ...prev, [id]: peaks };
+          });
+        } catch {
+          setSegmentPeaksById((prev) => {
+            if (Object.hasOwn(prev, id)) return prev;
+            return { ...prev, [id]: null };
+          });
+        } finally {
+          waveformDecodeInflightRef.current.delete(id);
+        }
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isLive,
+    state3TrackLayout,
+    segmentPeaksById,
+    setSegmentMetaDuration,
+  ]);
   useEffect(() => {
     if (segments?.length) {
       const sorted = [...segments].sort(
@@ -242,6 +423,7 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
     } else {
       setOrderedSegments([]);
       fetchedSegmentMetaIdsRef.current = new Set();
+      setSegmentPeaksById({});
       clearSegmentMetaDurations();
     }
   }, [segments, clearSegmentMetaDurations]);
@@ -742,7 +924,11 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
   return (
     <div className="relative w-full select-none">
       {/* ── OUTER WAVEFORM CONTAINER ─────────────────────────────────── */}
-      <div className="relative h-24 w-full rounded-lg border border-gray-200 bg-[#F3F4F6] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
+      <div
+        className={`relative w-full overflow-hidden rounded-lg border border-gray-200 bg-[#F3F4F6] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] ${
+          isLive || orderedSegments.length === 0 ? "h-24" : "h-[120px]"
+        }`}
+      >
         {/* Green markers: offset left of center by elapsed time × px/sec (rolling tape). */}
         {isLive &&
           duration > 0 &&
@@ -871,55 +1057,61 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
           /* ── STATE 3: DAW-style — fixed center playhead, track translateX, width ∝ duration ── */
           <div
             ref={state3ViewportRef}
-            className="absolute inset-2 z-10 overflow-hidden rounded-lg"
+            className="absolute inset-0 z-10 overflow-hidden"
           >
             <div
               ref={state3TrackRef}
-              className="absolute left-0 top-2 bottom-2 flex flex-nowrap items-stretch gap-1 will-change-transform"
+              className="absolute inset-0 flex flex-nowrap items-stretch gap-1 will-change-transform"
             >
               {state3TrackLayout.map(
                 ({ seg, timelineStart, durationSec, widthPx }, index) => {
                   const frozen = state3FrozenLayers[index];
+                  const waveGapPx =
+                    typeof frozen.waveGapPx === "number"
+                      ? frozen.waveGapPx
+                      : GAP_CSS;
                   return (
-                  <div
-                    key={seg._id}
-                    draggable={!isReordering}
-                    onDragStart={(e) => handleDragStart(e, index)}
-                    onDragOver={(e) => handleDragOver(e, index)}
-                    onDrop={(e) => handleDrop(e, index)}
-                    onDragEnd={handleDragEnd}
-                    className={`
-                                    relative box-border flex flex-none cursor-grab select-none flex-col overflow-hidden rounded-lg border
+                    <div
+                      key={seg._id}
+                      draggable={!isReordering}
+                      onDragStart={(e) => handleDragStart(e, index)}
+                      onDragOver={(e) => handleDragOver(e, index)}
+                      onDrop={(e) => handleDrop(e, index)}
+                      onDragEnd={handleDragEnd}
+                      className={`
+                                    relative box-border flex flex-none cursor-grab select-none flex-col overflow-hidden rounded-[8px] border
                                     border-[#C6C6C7] bg-[#E3E3E4] shadow-sm hover:bg-[#ECECED]
                                     active:cursor-grabbing
                                     ${
-                                      dragIndex === index ? "opacity-40 grayscale" : ""
+                                      dragIndex === index
+                                        ? "opacity-40 grayscale"
+                                        : ""
                                     }
                                 `}
-                    style={{
-                      width: widthPx,
-                      minWidth: widthPx,
-                      maxWidth: widthPx,
-                      flexShrink: 0,
-                      flexGrow: 0,
-                    }}
-                  >
-                    {(playbackSegmentId &&
-                      String(playbackSegmentId) === String(seg._id)) ||
-                    (dragOverIndex === index && dragIndex !== index) ? (
-                      <div
-                        className="pointer-events-none absolute inset-0 z-[28] rounded-[inherit]"
-                        aria-hidden
-                        style={{
-                          boxShadow:
-                            playbackSegmentId &&
-                            String(playbackSegmentId) === String(seg._id)
-                              ? "inset 0 0 0 2px rgba(28, 28, 146, 0.48)"
-                              : "inset 0 0 0 2px rgba(28, 28, 146, 0.22)",
-                        }}
-                      />
-                    ) : null}
-                    {frozen.markersHere.map((m) => {
+                      style={{
+                        width: widthPx,
+                        minWidth: widthPx,
+                        maxWidth: widthPx,
+                        flexShrink: 0,
+                        flexGrow: 0,
+                      }}
+                    >
+                      {(playbackSegmentId &&
+                        String(playbackSegmentId) === String(seg._id)) ||
+                      (dragOverIndex === index && dragIndex !== index) ? (
+                        <div
+                          className="pointer-events-none absolute inset-0 z-[28] rounded-[inherit]"
+                          aria-hidden
+                          style={{
+                            boxShadow:
+                              playbackSegmentId &&
+                              String(playbackSegmentId) === String(seg._id)
+                                ? "inset 0 0 0 2px rgba(28, 28, 146, 0.48)"
+                                : "inset 0 0 0 2px rgba(28, 28, 146, 0.22)",
+                          }}
+                        />
+                      ) : null}
+                      {frozen.markersHere.map((m) => {
                         const pct =
                           durationSec > 0
                             ? ((m.timestamp - timelineStart) / durationSec) *
@@ -933,109 +1125,118 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
                           />
                         );
                       })}
-                    <div className="relative flex shrink-0 items-center gap-1.5 border-b border-[#8E9092] bg-[#A1A3A5] px-2.5 pb-1 pt-2 z-10">
-                      <GripVertical className="h-3 w-3 text-[#262626]" />
-                      <button
-                        type="button"
-                        className="shrink-0 cursor-pointer border-0 bg-transparent p-0 text-inherit"
-                        aria-label="Rename segment"
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openPopover(
-                            seg._id,
-                            seg.name || "[Untitled]",
-                            e.currentTarget,
-                          );
-                        }}
-                      >
-                        <Mic className="h-3 w-3 text-[#262626]" />
-                      </button>
-                      <span
-                        role="button"
-                        tabIndex={0}
-                        className="truncate text-[11px] font-semibold text-[#262626] cursor-pointer"
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openPopover(
-                            seg._id,
-                            seg.name || "[Untitled]",
-                            e.currentTarget,
-                          );
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
+                      <div className="relative flex shrink-0 items-center gap-1.5 border-b border-[#8E9092] bg-[#A1A3A5] px-2.5 pb-1 pt-2 z-10">
+                        <GripVertical className="h-3 w-3 text-[#262626]" />
+                        <button
+                          type="button"
+                          className="shrink-0 cursor-pointer border-0 bg-transparent p-0 text-inherit"
+                          aria-label="Rename segment"
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
                             openPopover(
                               seg._id,
                               seg.name || "[Untitled]",
                               e.currentTarget,
                             );
-                          }
-                        }}
-                      >
-                        {seg.name || "[Untitled]"}
-                      </span>
-                      <div className="flex-1" />
-                      <span className="font-mono text-[10px] text-[#262626]">
-                        {formatTimer(seg.duration)}
-                      </span>
-                      {activePopover === seg._id && (
-                        <SegmentPopover
-                          id={seg._id}
-                          duration={seg.duration}
-                          createdAt={
-                            seg.createdAt
-                              ? new Date(seg.createdAt).toLocaleString(
-                                  "en-GB",
-                                  {
-                                    day: "2-digit",
-                                    month: "short",
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                    hour12: true,
-                                  },
-                                )
-                              : undefined
-                          }
-                        />
-                      )}
-                    </div>
-
-                    <div className="relative flex min-h-0 flex-1 flex-col items-stretch justify-start bg-[#E3E3E4] pb-1.5 pt-0.5">
-                      <div className="flex h-full min-h-0 w-full flex-1 items-stretch gap-px overflow-hidden">
-                        {frozen.bars}
-                      </div>
-                      {playbackSegmentId &&
-                        String(playbackSegmentId) === String(seg._id) && (
-                          <State3ActivePlaybackProgress
-                            timelineStart={timelineStart}
-                            durationSec={durationSec}
-                            segmentId={String(seg._id)}
+                          }}
+                        >
+                          <Mic className="h-3 w-3 text-[#262626]" />
+                        </button>
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          className="truncate text-[11px] font-semibold text-[#262626] cursor-pointer"
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openPopover(
+                              seg._id,
+                              seg.name || "[Untitled]",
+                              e.currentTarget,
+                            );
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              openPopover(
+                                seg._id,
+                                seg.name || "[Untitled]",
+                                e.currentTarget,
+                              );
+                            }
+                          }}
+                        >
+                          {seg.name || "[Untitled]"}
+                        </span>
+                        <div className="flex-1" />
+                        <span className="font-mono text-[10px] text-[#262626]">
+                          {formatTimer(seg.duration)}
+                        </span>
+                        {activePopover === seg._id && (
+                          <SegmentPopover
+                            id={seg._id}
+                            duration={seg.duration}
+                            createdAt={
+                              seg.createdAt
+                                ? new Date(seg.createdAt).toLocaleString(
+                                    "en-GB",
+                                    {
+                                      day: "2-digit",
+                                      month: "short",
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                      hour12: true,
+                                    },
+                                  )
+                                : undefined
+                            }
                           />
                         )}
+                      </div>
+
+                      <div className="relative shrink-0 bg-[#E3E3E4]">
+                        <div
+                          className="relative w-full shrink-0 overflow-hidden rounded-[8px] bg-[#E3E3E4]"
+                          style={{ height: STATE3_WAVEFORM_H_PX }}
+                        >
+                          <div
+                            className="flex h-full w-full items-center justify-start overflow-hidden"
+                            style={{ gap: `${waveGapPx}px` }}
+                          >
+                            {frozen.bars}
+                          </div>
+                          {playbackSegmentId &&
+                            String(playbackSegmentId) === String(seg._id) && (
+                              <State3ActivePlaybackProgress
+                                timelineStart={timelineStart}
+                                durationSec={durationSec}
+                                segmentId={String(seg._id)}
+                              />
+                            )}
+                        </div>
+                      </div>
                     </div>
-                  </div>
                   );
                 },
               )}
             </div>
-            {(segments?.length ?? 0) > 0 && segments?.some((s) => s.fileUrl) && (
-              <div
-                className="pointer-events-none absolute left-1/2 top-0 z-[100002] -translate-x-1/2"
-                style={{
-                  top: 0,
-                  bottom: 0,
-                  width: 2,
-                  backgroundColor: "#FF0000",
-                  zIndex: 99999,
-                  opacity: 1,
-                  visibility: "visible",
-                  boxShadow: "0 0 6px 1px rgba(255,0,0,0.85)",
-                }}
-              />
-            )}
+            {(segments?.length ?? 0) > 0 &&
+              segments?.some((s) => s.fileUrl) && (
+                <div
+                  className="pointer-events-none absolute left-1/2 top-0 z-[100002] -translate-x-1/2"
+                  style={{
+                    top: 0,
+                    bottom: 0,
+                    width: 2,
+                    backgroundColor: "#FF0000",
+                    zIndex: 99999,
+                    opacity: 1,
+                    visibility: "visible",
+                    boxShadow: "0 0 6px 1px rgba(255,0,0,0.85)",
+                  }}
+                />
+              )}
           </div>
         ) : (
           /* ── STATE 1: EMPTY ── */
@@ -1045,24 +1246,20 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
             </div>
           </div>
         )}
-        {
-          /* Red playhead — live recording; fixed at center (STATE 2) */
-        }
-        {
-          isLive && (
-            <div
-              className="pointer-events-none absolute left-1/2 top-0 bottom-0 z-[100002] -translate-x-1/2"
-              style={{
-                width: 2,
-                backgroundColor: "#FF0000",
-                zIndex: 99999,
-                opacity: 1,
-                visibility: "visible",
-                boxShadow: "0 0 6px 1px rgba(255,0,0,0.85)",
-              }}
-            />
-          )
-        }
+        {/* Red playhead — live recording; fixed at center (STATE 2) */}
+        {isLive && (
+          <div
+            className="pointer-events-none absolute left-1/2 top-0 bottom-0 z-[100002] -translate-x-1/2"
+            style={{
+              width: 2,
+              backgroundColor: "#FF0000",
+              zIndex: 99999,
+              opacity: 1,
+              visibility: "visible",
+              boxShadow: "0 0 6px 1px rgba(255,0,0,0.85)",
+            }}
+          />
+        )}
       </div>
 
       {isLive && (
@@ -1117,7 +1314,7 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
       )}
 
       {/* ── TIMELINE RULER ───────────────────────────────────────────── */}
-      <div className="mt-2 flex flex-col gap-1 px-0.5">
+      <div className="mt-2 flex flex-col gap-1 px-0">
         <div className="flex h-2 items-end justify-between border-x border-gray-200/90">
           {Array.from({ length: 11 }).map((_, i) => (
             <div
