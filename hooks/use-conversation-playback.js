@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import useConversationStore from "../store/conversation.store";
+import { segmentDurationSecForTimeline } from "./segment-duration-for-timeline";
 
 function blockStartMs(block) {
   if (block?.startTimeMs != null && block?.startTimeMs !== "") {
@@ -33,22 +34,64 @@ function sortedSegments(segments) {
   );
 }
 
-function findSegmentAtGlobalTime(segments, t) {
+function segmentDurForPlayback(seg) {
+  return segmentDurationSecForTimeline(
+    seg,
+    useConversationStore.getState().segmentMetaDurationById || {},
+  );
+}
+
+/** Cumulative timeline start for `segId` (not raw `seg.startTime` when segments share startTime 0). */
+function timelineStartForSegment(segments, segId) {
   const list = sortedSegments(segments);
-  let best = null;
-  let bestStart = -Infinity;
-  for (const seg of list) {
-    const st = Number(seg.startTime) || 0;
-    const en =
-      seg.endTime != null && seg.endTime !== ""
-        ? Number(seg.endTime)
-        : st + (Number(seg.duration) || 0);
-    if (t + 1e-6 >= st && t <= en + 1e-3 && st >= bestStart) {
-      bestStart = st;
-      best = seg;
+  let acc = 0;
+  for (const s of list) {
+    if (String(s._id) === String(segId)) {
+      const stRaw = Number(s.startTime);
+      return Number.isFinite(stRaw) && stRaw >= acc ? stRaw : acc;
     }
+    const stRaw = Number(s.startTime);
+    const timelineStart = Number.isFinite(stRaw) && stRaw >= acc ? stRaw : acc;
+    const dur = segmentDurForPlayback(s);
+    acc = timelineStart + dur;
   }
-  return best || list[0] || null;
+  return 0;
+}
+
+/** When API leaves `conversation.totalDuration` at 0 but segments have audio, still allow playback. */
+export function effectiveTotalDuration(conversation, segments) {
+  const td = Number(conversation?.totalDuration) || 0;
+  if (td > 0) return td;
+  const list = sortedSegments(segments);
+  if (!list.some((s) => s.fileUrl)) return 0;
+  let maxEnd = 0;
+  for (const s of list) {
+    const st = Number(s.startTime) || 0;
+    const en =
+      s.endTime != null && s.endTime !== ""
+        ? Number(s.endTime)
+        : st + (Number(s.duration) || 0);
+    maxEnd = Math.max(maxEnd, en);
+  }
+  return maxEnd > 0 ? maxEnd : Number.POSITIVE_INFINITY;
+}
+
+function findSegmentOwningCumulativeTime(segments, globalT) {
+  const list = sortedSegments(segments);
+  if (!list.length) return null;
+  let accEnd = 0;
+  for (const seg of list) {
+    const stRaw = Number(seg.startTime);
+    const timelineStart =
+      Number.isFinite(stRaw) && stRaw >= accEnd ? stRaw : accEnd;
+    const dur = segmentDurForPlayback(seg);
+    const regionEnd = timelineStart + dur;
+    if (globalT + 1e-9 >= timelineStart && globalT <= regionEnd + 1e-3) {
+      return seg;
+    }
+    accEnd = regionEnd;
+  }
+  return list[list.length - 1];
 }
 
 function findBlockAtGlobalTime(transcript, segments, t) {
@@ -81,28 +124,32 @@ function findBlockAtGlobalTime(transcript, segments, t) {
 export function useConversationPlayback() {
   const audioRef = useRef(null);
   const loadedSegmentIdRef = useRef(null);
+  /** Skip timeupdate while swapping <audio> src (avoids stale currentTime → wrong active segment). */
+  const suppressTimeUpdateRef = useRef(false);
 
   const setPlaybackState = useConversationStore((s) => s.setPlaybackState);
   const conversation = useConversationStore((s) => s.conversation);
+  const segments = useConversationStore((s) => s.segments);
   const isPlaying = useConversationStore((s) => s.isPlaying);
   const currentTime = useConversationStore((s) => s.currentTime);
   const playbackRate =
     useConversationStore((s) => s.playbackRate) || 1;
 
-  const totalDuration = Number(conversation?.totalDuration) || 0;
+  const totalDuration = effectiveTotalDuration(conversation, segments);
 
   const pushPlaybackUi = useCallback(
     (globalSec, opts) => {
       const state = useConversationStore.getState();
       const segs = sortedSegments(state.segments);
       const tr = state.transcript;
-      const total = Number(state.conversation?.totalDuration) || 0;
+      const total = effectiveTotalDuration(state.conversation, state.segments);
       const clamped = Math.max(0, Math.min(globalSec, total));
       const pinnedId = opts?.segmentId != null ? String(opts.segmentId) : null;
       const segFromAudio = pinnedId
         ? segs.find((s) => s._id?.toString() === pinnedId)
         : null;
-      const seg = segFromAudio ?? findSegmentAtGlobalTime(segs, clamped);
+      const seg =
+        segFromAudio ?? findSegmentOwningCumulativeTime(segs, clamped);
       const block = findBlockAtGlobalTime(tr, segs, clamped);
       setPlaybackState({
         currentTime: clamped,
@@ -119,25 +166,35 @@ export function useConversationPlayback() {
         const state = useConversationStore.getState();
         const rate = state.playbackRate || 1;
         const segs = sortedSegments(state.segments);
-        const seg = findSegmentAtGlobalTime(segs, globalSec);
-        const total = Number(state.conversation?.totalDuration) || 0;
+        const seg = findSegmentOwningCumulativeTime(segs, globalSec);
+        const total = effectiveTotalDuration(state.conversation, state.segments);
         const clamped = Math.max(0, Math.min(globalSec, total));
         if (!seg?.fileUrl || !audioRef.current) {
           pushPlaybackUi(clamped);
           resolve();
           return;
         }
-        const st = Number(seg.startTime) || 0;
-        const offset = Math.max(0, clamped - st);
         const a = audioRef.current;
         const segKey = seg._id?.toString();
+        const timelineStart = timelineStartForSegment(segs, segKey);
+        const offset = Math.max(0, clamped - timelineStart);
 
         a.playbackRate = rate;
 
         const startPlayback = () => {
+          const bufDur = Number.isFinite(a.duration) ? a.duration : NaN;
+          if (Number.isFinite(bufDur) && bufDur > 0 && segKey) {
+            useConversationStore.getState().setSegmentMetaDuration(segKey, bufDur);
+          }
           a.currentTime = offset;
-          pushPlaybackUi(st + offset, { segmentId: segKey });
+          pushPlaybackUi(timelineStart + offset, { segmentId: segKey });
           if (andPlay) {
+            console.log("[playback] audio.play()", {
+              segmentId: segKey,
+              audioBufferDuration: bufDur,
+              offset,
+              globalTime: timelineStart + offset,
+            });
             a.play().catch(() => {});
             setPlaybackState({ isPlaying: true });
           }
@@ -145,6 +202,7 @@ export function useConversationPlayback() {
         };
 
         if (loadedSegmentIdRef.current !== segKey) {
+          suppressTimeUpdateRef.current = true;
           loadedSegmentIdRef.current = segKey;
           a.pause();
           a.src = seg.fileUrl;
@@ -152,11 +210,13 @@ export function useConversationPlayback() {
           const onReady = () => {
             a.removeEventListener("loadedmetadata", onReady);
             a.removeEventListener("error", onErr);
+            suppressTimeUpdateRef.current = false;
             startPlayback();
           };
           const onErr = () => {
             a.removeEventListener("loadedmetadata", onReady);
             a.removeEventListener("error", onErr);
+            suppressTimeUpdateRef.current = false;
             resolve();
           };
           a.addEventListener("loadedmetadata", onReady, { once: true });
@@ -177,13 +237,14 @@ export function useConversationPlayback() {
     const onTimeUpdate = () => {
       const state = useConversationStore.getState();
       if (!state.isPlaying) return;
+      if (suppressTimeUpdateRef.current) return;
       const segId = loadedSegmentIdRef.current;
       const segs = sortedSegments(state.segments);
       const seg = segs.find((s) => s._id?.toString() === segId);
       if (!seg) return;
-      const st = Number(seg.startTime) || 0;
+      const timelineStart = timelineStartForSegment(segs, segId);
       const ct = Number.isFinite(a.currentTime) ? a.currentTime : 0;
-      const globalT = st + ct;
+      const globalT = timelineStart + ct;
       pushPlaybackUi(globalT, { segmentId: segId });
     };
 
@@ -194,30 +255,53 @@ export function useConversationPlayback() {
       const curId = loadedSegmentIdRef.current;
       const idx = order.findIndex((s) => s._id?.toString() === curId);
       const next = idx >= 0 ? order[idx + 1] : null;
-      const total = Number(state.conversation?.totalDuration) || 0;
+      const total = effectiveTotalDuration(state.conversation, state.segments);
 
       if (next?.fileUrl) {
+        suppressTimeUpdateRef.current = true;
         loadedSegmentIdRef.current = next._id.toString();
         const a2 = audioRef.current;
         a2.pause();
         a2.src = next.fileUrl;
         a2.load();
         a2.addEventListener(
+          "error",
+          () => {
+            suppressTimeUpdateRef.current = false;
+          },
+          { once: true },
+        );
+        a2.addEventListener(
           "loadedmetadata",
           () => {
             a2.currentTime = 0;
             a2.playbackRate = rate;
-            pushPlaybackUi(Number(next.startTime) || 0, {
+            const bufDur = Number.isFinite(a2.duration) ? a2.duration : NaN;
+            if (Number.isFinite(bufDur) && bufDur > 0) {
+              useConversationStore
+                .getState()
+                .setSegmentMetaDuration(String(next._id), bufDur);
+            }
+            const nextGlobal = timelineStartForSegment(order, next._id);
+            pushPlaybackUi(nextGlobal, {
               segmentId: next._id,
+            });
+            console.log("[playback] audio.play()", {
+              segmentId: String(next._id),
+              audioBufferDuration: bufDur,
+              offset: 0,
+              globalTime: nextGlobal,
             });
             a2.play().catch(() => {});
             setPlaybackState({ isPlaying: true });
+            suppressTimeUpdateRef.current = false;
           },
           { once: true },
         );
       } else {
         setPlaybackState({ isPlaying: false });
-        pushPlaybackUi(total);
+        const endT = Number.isFinite(total) ? total : state.currentTime || 0;
+        pushPlaybackUi(endT);
       }
     };
 
@@ -244,9 +328,11 @@ export function useConversationPlayback() {
   const togglePlayPause = useCallback(() => {
     const state = useConversationStore.getState();
     const playing = state.isPlaying;
-    const total = Number(state.conversation?.totalDuration) || 0;
-    if (total <= 0 || !sortedSegments(state.segments).some((s) => s.fileUrl))
-      return;
+    const segs = sortedSegments(state.segments);
+    if (!segs.some((s) => s.fileUrl)) return;
+
+    const total = effectiveTotalDuration(state.conversation, state.segments);
+    if (total === 0) return;
 
     if (playing) {
       audioRef.current?.pause();
@@ -255,7 +341,7 @@ export function useConversationPlayback() {
     }
 
     let t = state.currentTime || 0;
-    if (t >= total - 0.05) t = 0;
+    if (Number.isFinite(total) && t >= total - 0.05) t = 0;
 
     loadAudioAtGlobalTime(t, true);
   }, [loadAudioAtGlobalTime, setPlaybackState]);
@@ -263,7 +349,7 @@ export function useConversationPlayback() {
   const seekBy = useCallback(
     (deltaSec) => {
       const state = useConversationStore.getState();
-      const total = Number(state.conversation?.totalDuration) || 0;
+      const total = effectiveTotalDuration(state.conversation, state.segments);
       const next = Math.max(0, Math.min((state.currentTime || 0) + deltaSec, total));
       const wasPlaying = state.isPlaying;
       void loadAudioAtGlobalTime(next, wasPlaying).then(() => {

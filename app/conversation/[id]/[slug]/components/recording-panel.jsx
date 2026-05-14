@@ -75,11 +75,10 @@ const RecordingPanel = ({
 
   /** Recording: live timer. Idle: total length until playback moves the head (then show position). */
   const totalDur = Number(conversation?.totalDuration) || 0;
+  const hasPlayableSegments =
+    timelineSegments?.some?.((s) => Boolean(s.fileUrl)) ?? false;
   const playbackControlsDisabled =
-    isProcessing ||
-    isRecording ||
-    totalDur <= 0 ||
-    !timelineSegments?.some?.((s) => s.fileUrl);
+    isProcessing || isRecording || !hasPlayableSegments;
   const displaySeconds = isRecording
     ? duration
     : convIsPlaying || convPlaybackTime > 0
@@ -319,7 +318,7 @@ const RecordingPanel = ({
           </button>
           <button
             type="button"
-            className={`flex h-9 w-9 items-center justify-center rounded-full disabled:opacity-50 transition-colors ${
+            className={`flex h-9 bg-[#1C1C92] text-white cursor-pointer w-9 items-center justify-center rounded-full disabled:opacity-50 transition-colors ${
               !isRecording && convIsPlaying
                 ? "bg-[#1C1C92] text-white"
                 : "border border-gray-300 text-gray-600"
@@ -331,9 +330,11 @@ const RecordingPanel = ({
             }
           >
             {!isRecording && convIsPlaying ? (
-              <Pause className="h-5 w-5 fill-current" />
+              <>
+                <Pause className="h-5 w-5 fill-current" />
+              </>
             ) : (
-              <Play className="h-5 w-5 fill-current pl-0.5" />
+              <Play className="h-5 w-5 fill-current! pl-0.5" />
             )}
           </button>
           <button

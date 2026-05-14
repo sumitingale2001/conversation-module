@@ -1,12 +1,23 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  memo,
+} from "react";
 import { createPortal } from "react-dom";
 import { Diamond, GripVertical, Mic, Trash2, Send } from "lucide-react";
 import useConversationStore from "@/store/conversation.store";
 import { useRecordingStore } from "@/store/recording.store";
 import { conversationServices } from "@/services/conversationServices";
 import useGetConversation from "@/hooks/use-get-conversation";
+import { effectiveTotalDuration } from "@/hooks/use-conversation-playback";
+import { segmentDurationSecForTimeline } from "@/hooks/segment-duration-for-timeline";
+import { TIMELINE_PX_PER_SEC } from "@/hooks/timeline-constants";
 import {
   AddTagPopover,
   BookmarkTagsHoverPopover,
@@ -45,15 +56,82 @@ const GAP_CSS = 0.85;
 const WAVEFORM_BG = "#E3E3E4";
 const BAR_FILL = "#979797";
 
+/** STATE 3 pseudo-waveform — flex bars fill 100% of segment inner width (no intrinsic bar strip width). */
+function drawState3WaveformBars(seg, widthPx) {
+  const barSlots = Math.min(
+    96,
+    Math.max(24, Math.floor(Math.max(8, widthPx) / 3)),
+  );
+  return Array.from({ length: barSlots }).map((_, i) => {
+    const seed = seg._id.charCodeAt(i % seg._id.length);
+    const h =
+      22 +
+      Math.abs(Math.sin(i * 0.55 + seed * 0.02)) * 48 +
+      (seed % 14);
+    return (
+      <div
+        key={`${seg._id}-bar-${i}`}
+        className="max-h-[92%] min-h-[2px] min-w-0 flex-1 basis-0 rounded-[1px]"
+        style={{
+          height: `${h}%`,
+          backgroundColor: BAR_FILL,
+        }}
+      />
+    );
+  });
+}
+
+/** Local playback progress line — ONLY mount under active segment; subscribes to global time. */
+const State3ActivePlaybackProgress = memo(function State3ActivePlaybackProgress({
+  timelineStart,
+  durationSec,
+  segmentId,
+}) {
+  const currentTime = useConversationStore((s) => s.currentTime);
+  const playbackSegmentId = useConversationStore((s) => s.playbackSegmentId);
+  if (String(playbackSegmentId) !== String(segmentId)) return null;
+  if (!Number.isFinite(durationSec) || durationSec <= 0) return null;
+  const local = Math.max(
+    0,
+    Math.min((currentTime || 0) - timelineStart, durationSec),
+  );
+  const pct = (local / durationSec) * 100;
+  return (
+    <div
+      className="pointer-events-none absolute inset-y-0 z-[32] w-0.5 bg-[#1C1C92]/90"
+      style={{
+        left: `${pct}%`,
+        transform: "translateX(-50%)",
+        boxShadow: "0 0 4px rgba(28,28,146,0.35)",
+      }}
+      aria-hidden
+    />
+  );
+});
+
 const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
   const canvasRef = useRef(null);
   const requestRef = useRef(null);
   const audioContextRef = useRef(null);
   const isPausedRef = useRef(false);
-  const durationRef = useRef(0);
-  const { conversation, segments } = useConversationStore();
-  const playbackCurrentTime = useConversationStore((s) => s.currentTime);
+  // Ring-buffer for rolling waveform history (live STATE 2 only)
+  const ampBufferRef = useRef(new Float32Array(4000));
+  const ampHeadRef = useRef(0);
+  const pxPerSecRef = useRef(0);
+  /** Narrow selectors — never subscribe to full store (currentTime ticks would re-render every chip). */
+  const conversation = useConversationStore((s) => s.conversation);
+  const segments = useConversationStore((s) => s.segments);
+  const playbackIsPlaying = useConversationStore((s) => s.isPlaying);
   const playbackSegmentId = useConversationStore((s) => s.playbackSegmentId);
+  const segmentMetaDurationById = useConversationStore(
+    (s) => s.segmentMetaDurationById,
+  );
+  const setSegmentMetaDuration = useConversationStore(
+    (s) => s.setSegmentMetaDuration,
+  );
+  const clearSegmentMetaDurations = useConversationStore(
+    (s) => s.clearSegmentMetaDurations,
+  );
   const {
     duration,
     title,
@@ -85,6 +163,9 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
     el: null,
   });
   const tagHoverLeaveTimerRef = useRef(null);
+  const state3ViewportRef = useRef(null);
+  const state3TrackRef = useRef(null);
+  const fetchedSegmentMetaIdsRef = useRef(new Set());
 
   const clearTagHoverTimer = useCallback(() => {
     if (tagHoverLeaveTimerRef.current) {
@@ -102,11 +183,54 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
 
   const isLive = !!(mediaStream && mediaStream.getAudioTracks().length > 0);
   const totalDuration = conversation?.totalDuration || 0;
-  const playbackHeadPct =
+  const timelineEndForTicks =
     totalDuration > 0
-      ? Math.min(100, Math.max(0, (playbackCurrentTime / totalDuration) * 100))
-      : 0;
-  const ticks = generateTicks(totalDuration);
+      ? totalDuration
+      : Math.min(
+          effectiveTotalDuration(conversation, segments),
+          Number.MAX_SAFE_INTEGER,
+        );
+  const ticks = generateTicks(
+    Number.isFinite(timelineEndForTicks) && timelineEndForTicks < 1e15
+      ? timelineEndForTicks
+      : totalDuration,
+  );
+
+  const state3TrackLayout = useMemo(() => {
+    if (!orderedSegments?.length) return [];
+    const list = [...orderedSegments];
+    let accEnd = 0;
+    return list.map((seg) => {
+      const stRaw = Number(seg.startTime);
+      const timelineStart =
+        Number.isFinite(stRaw) && stRaw >= accEnd ? stRaw : accEnd;
+      const dur = segmentDurationSecForTimeline(seg, segmentMetaDurationById);
+      const widthPx = Math.max(1, Math.round(dur * TIMELINE_PX_PER_SEC));
+      accEnd = timelineStart + dur;
+      return { seg, timelineStart, durationSec: dur, widthPx };
+    });
+  }, [orderedSegments, segmentMetaDurationById]);
+
+  /** Frozen waveform + bookmark DOM for STATE 3 — must NOT rebuild on every global time tick. */
+  const state3FrozenLayers = useMemo(() => {
+    return state3TrackLayout.map(
+      ({ seg, timelineStart, durationSec, widthPx }) => {
+        const markersHere = markers.filter((m) => {
+          const en = timelineStart + durationSec;
+          return (
+            m.timestamp >= timelineStart - 1e-3 && m.timestamp <= en + 1e-3
+          );
+        });
+        return {
+          segId: String(seg._id),
+          bars: drawState3WaveformBars(seg, widthPx),
+          markersHere,
+          timelineStart,
+          durationSec,
+        };
+      },
+    );
+  }, [state3TrackLayout, markers]);
 
   // Sync ordered segments from store
   useEffect(() => {
@@ -117,8 +241,114 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
       setOrderedSegments(sorted);
     } else {
       setOrderedSegments([]);
+      fetchedSegmentMetaIdsRef.current = new Set();
+      clearSegmentMetaDurations();
     }
-  }, [segments]);
+  }, [segments, clearSegmentMetaDurations]);
+
+  useEffect(() => {
+    if (!orderedSegments?.length) return;
+    const cleanups = [];
+    orderedSegments.forEach((seg) => {
+      const id = String(seg._id);
+      if (!seg.fileUrl || fetchedSegmentMetaIdsRef.current.has(id)) return;
+      fetchedSegmentMetaIdsRef.current.add(id);
+      const a = new Audio();
+      a.preload = "metadata";
+      const onMeta = () => {
+        const d = a.duration;
+        if (!Number.isFinite(d) || d <= 0) return;
+        setSegmentMetaDuration(id, d);
+      };
+      a.addEventListener("loadedmetadata", onMeta, { once: true });
+      a.addEventListener("error", () => {}, { once: true });
+      a.src = seg.fileUrl;
+      cleanups.push(() => {
+        a.removeAttribute("src");
+        a.load();
+      });
+    });
+    return () => {
+      cleanups.forEach((fn) => fn());
+    };
+  }, [orderedSegments, setSegmentMetaDuration]);
+
+  // After segment widths / metadata settle, sync track translate before paint (avoids one-frame collapse).
+  useLayoutEffect(() => {
+    if (isLive || orderedSegments.length === 0) return;
+    const vp = state3ViewportRef.current;
+    const tr = state3TrackRef.current;
+    if (!vp || !tr) return;
+    const t = useConversationStore.getState().currentTime || 0;
+    const centerX = vp.offsetWidth / 2;
+    tr.style.transform = `translate3d(${centerX - t * TIMELINE_PX_PER_SEC}px, 0, 0)`;
+  }, [isLive, orderedSegments.length, state3TrackLayout]);
+
+  useEffect(() => {
+    if (isLive || orderedSegments.length === 0) return;
+    const vp = state3ViewportRef.current;
+    if (!vp) return;
+    let rafId;
+    const apply = () => {
+      const tr = state3TrackRef.current;
+      if (!tr) return;
+      const t = useConversationStore.getState().currentTime || 0;
+      const centerX = vp.offsetWidth / 2;
+      tr.style.transform = `translate3d(${centerX - t * TIMELINE_PX_PER_SEC}px, 0, 0)`;
+    };
+    const loop = () => {
+      apply();
+      if (useConversationStore.getState().isPlaying) {
+        rafId = requestAnimationFrame(loop);
+      }
+    };
+    const ro =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            apply();
+          })
+        : null;
+    ro?.observe(vp);
+    if (playbackIsPlaying) {
+      rafId = requestAnimationFrame(loop);
+    } else {
+      apply();
+    }
+    return () => {
+      ro?.disconnect();
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [
+    isLive,
+    orderedSegments.length,
+    playbackIsPlaying,
+    state3TrackLayout.length,
+  ]);
+
+  // Paused / seek: sync track translate without subscribing parent to currentTime (avoids re-rendering all chips).
+  useEffect(() => {
+    if (isLive || orderedSegments.length === 0) return;
+    const vp = state3ViewportRef.current;
+    const tr = state3TrackRef.current;
+    if (!vp || !tr) return;
+    const apply = () => {
+      const st = useConversationStore.getState();
+      const t = st.currentTime || 0;
+      const centerX = vp.offsetWidth / 2;
+      tr.style.transform = `translate3d(${centerX - t * TIMELINE_PX_PER_SEC}px, 0, 0)`;
+    };
+    const unsub = useConversationStore.subscribe((state, prev) => {
+      if (state.isPlaying) return;
+      if (
+        state.currentTime !== prev.currentTime ||
+        (prev.isPlaying && !state.isPlaying)
+      ) {
+        apply();
+      }
+    });
+    apply();
+    return () => unsub();
+  }, [isLive, orderedSegments.length]);
 
   useEffect(() => {
     if (!isLive) {
@@ -268,14 +498,22 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
     const nyquist = sr / 2;
     const fMin = 45;
 
+    ampBufferRef.current = new Float32Array(4000);
+    ampHeadRef.current = 0;
+
     const draw = () => {
       requestRef.current = requestAnimationFrame(draw);
+
       const w = canvas.width;
       const h = canvas.height;
       const cssW = layoutRef.cssW;
       const barW = (BAR_W_CSS / cssW) * w;
       const gap = (GAP_CSS / cssW) * w;
-      const n = Math.max(1, Math.floor((w + gap) / (barW + gap)));
+      const step = barW + gap;
+      const centerX = w / 2;
+
+      pxPerSecRef.current = step * 30;
+
       const radius = Math.min(0.85, barW * 0.35);
 
       canvasCtx.fillStyle = WAVEFORM_BG;
@@ -296,62 +534,65 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
         canvasCtx.fill();
       };
 
-      if (isPausedRef.current) {
-        const t = durationRef.current;
-        for (let i = 0; i < n; i++) {
-          const rel = (i + t) * 0.31;
-          const amp =
-            0.18 +
-            0.62 *
-              Math.abs(
-                Math.sin(rel) * 0.55 + Math.sin(rel * 1.7 + t * 0.05) * 0.45,
-              );
-          const barH = Math.max(2, amp * h * 0.72);
-          const x = i * (barW + gap);
-          const y = (h - barH) / 2;
-          drawBar(x, y, barW, barH, BAR_FILL);
-        }
-      } else {
+      if (!isPausedRef.current) {
         analyser.getByteFrequencyData(freqData);
         analyser.getByteTimeDomainData(timeData);
+
+        const n = Math.max(1, Math.floor((w + gap) / step));
         const slice = Math.max(2, Math.floor(timeData.length / n));
 
-        for (let i = 0; i < n; i++) {
-          const fLow = fMin * Math.pow(nyquist / fMin, i / n);
-          const fHigh = fMin * Math.pow(nyquist / fMin, (i + 1) / n);
-          const b0 = Math.max(1, Math.floor((fLow / nyquist) * freqBins));
-          const b1 = Math.min(
-            freqBins - 1,
-            Math.ceil((fHigh / nyquist) * freqBins),
-          );
-
+        let freqNorm = 0;
+        {
+          const b0 = Math.max(1, Math.floor((fMin / nyquist) * freqBins));
+          const b1 = freqBins - 1;
           let peak = 0;
-          for (let b = b0; b <= b1; b++) {
-            peak = Math.max(peak, freqData[b]);
-          }
-          const freqNorm = peak / 255;
-
-          let sumSq = 0;
-          const off = i * slice;
-          const end = Math.min(off + slice, timeData.length);
-          for (let j = off; j < end; j++) {
-            const v = (timeData[j] - 128) / 128;
-            sumSq += v * v;
-          }
-          const rms = Math.sqrt(sumSq / Math.max(1, end - off));
-          const timeNorm = Math.min(1, rms * 5.2);
-
-          const mix = Math.min(1, 0.52 * freqNorm + 0.48 * timeNorm);
-          const boosted = Math.pow(mix, 0.52);
-          const shaped = 0.06 + 0.94 * boosted;
-          const barH = Math.max(2, shaped * h * 0.8);
-          const x = i * (barW + gap);
-          const y = (h - barH) / 2;
-          drawBar(x, y, barW, barH, BAR_FILL);
+          for (let b = b0; b <= b1; b++) peak = Math.max(peak, freqData[b]);
+          freqNorm = peak / 255;
         }
+
+        let sumSq = 0;
+        for (let j = 0; j < slice; j++) {
+          const v = (timeData[j] - 128) / 128;
+          sumSq += v * v;
+        }
+        const rms = Math.sqrt(sumSq / slice);
+        const timeNorm = Math.min(1, rms * 5.2);
+
+        const mix = Math.min(1, 0.52 * freqNorm + 0.48 * timeNorm);
+        const boosted = Math.pow(mix, 0.52);
+        const amp = 0.06 + 0.94 * boosted;
+
+        const idx = ampHeadRef.current % ampBufferRef.current.length;
+        ampBufferRef.current[idx] = amp;
+        ampHeadRef.current += 1;
       }
 
-      /* Bookmark marker lines: DOM overlays (aligned with chip + diamonds). */
+      const totalFrames = ampHeadRef.current;
+      const nBarsLeft = Math.ceil(centerX / step) + 1;
+
+      for (let i = 0; i < nBarsLeft; i++) {
+        const frameIdx = totalFrames - 1 - i;
+        if (frameIdx < 0) break;
+
+        const amp =
+          ampBufferRef.current[frameIdx % ampBufferRef.current.length];
+        const shaped = 0.06 + 0.94 * Math.pow(amp, 0.52);
+        const barH = Math.max(2, shaped * h * 0.8);
+        const x = centerX - i * step - barW / 2;
+
+        if (x + barW < 0) break;
+
+        drawBar(x, (h - barH) / 2, barW, barH, BAR_FILL);
+      }
+
+      {
+        const nBarsRight = Math.ceil((w - centerX) / step);
+        for (let i = 1; i <= nBarsRight; i++) {
+          const x = centerX + i * step - barW / 2;
+          if (x > w) break;
+          drawBar(x, (h - 2) / 2, barW, 2, `${BAR_FILL}55`);
+        }
+      }
     };
 
     draw();
@@ -361,6 +602,8 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
       if (audioContextRef.current?.state !== "closed")
         audioContextRef.current?.close();
+      ampBufferRef.current = new Float32Array(4000);
+      ampHeadRef.current = 0;
     };
   }, [isLive, mediaStream]);
 
@@ -420,18 +663,7 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
     setDragOverIndex(null);
   };
 
-  /* Grow width only as duration increases — no 25% jump at start. Use 120s visual span when no timeline total. */
-  const widthReferenceSec =
-    totalDuration > 0 ? Math.max(totalDuration, 1) : 120;
-  const chipWidthPct =
-    duration > 0
-      ? Math.min((duration / widthReferenceSec) * 100, 92)
-      : isLive
-        ? 0.35
-        : 0;
-
   isPausedRef.current = isPaused;
-  durationRef.current = duration;
 
   const SegmentPopover = ({ id, duration: dur, createdAt }) => {
     if (!popoverAnchor || typeof document === "undefined") return null;
@@ -511,29 +743,16 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
     <div className="relative w-full select-none">
       {/* ── OUTER WAVEFORM CONTAINER ─────────────────────────────────── */}
       <div className="relative h-24 w-full rounded-lg border border-gray-200 bg-[#F3F4F6] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
-        {/* Fixed center line — live recording only */}
-        {isLive && (
-          <div className="pointer-events-none absolute inset-y-0 left-1/2 z-30 w-px -translate-x-1/2 bg-red-500/85 shadow-[0_0_6px_rgba(239,68,68,0.45)]" />
-        )}
-
-        {/* Completed timeline playback head */}
-        {!isLive && totalDuration > 0 && orderedSegments.length > 0 && (
-          <div
-            className="pointer-events-none absolute inset-y-0 z-[35] w-px bg-red-500/90 shadow-[0_0_6px_rgba(239,68,68,0.45)]"
-            style={{
-              left: `calc(8px + (100% - 16px) * ${playbackHeadPct / 100})`,
-              transform: "translateX(-50%)",
-            }}
-          />
-        )}
-
-        {/* Green markers: same horizontal math as live chip (left edge → playhead at center). */}
+        {/* Green markers: offset left of center by elapsed time × px/sec (rolling tape). */}
         {isLive &&
           duration > 0 &&
           markers.map((m) => {
-            const t = Math.min(Math.max(0, m.timestamp / duration), 1);
-            const p = (50 - chipWidthPct) / 100 + t * (chipWidthPct / 100);
-            const left = `calc(8px + (100% - 16px) * ${p})`;
+            const secsAgo = duration - m.timestamp;
+            const pxAgo = secsAgo * (pxPerSecRef.current || 0);
+            const left = `calc(50% - ${pxAgo}px)`;
+            if (pxPerSecRef.current > 0 && pxAgo > window.innerWidth / 2) {
+              return null;
+            }
             return (
               <React.Fragment key={m.id}>
                 <div
@@ -575,236 +794,248 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
           })}
 
         {isLive ? (
-          /* ── STATE 2: chip right edge at center playhead, width grows toward the left ── */
+          /* ── STATE 2: full-width rolling tape — canvas fills container ── */
           <div className="pointer-events-none absolute inset-y-2 left-2 right-2 z-10">
-            <div
-              className={`absolute inset-y-0 overflow-hidden rounded-l-lg rounded-r-none border border-[#C6C6C7] border-r-0 bg-[#E3E3E4] shadow-sm pointer-events-auto ${
-                isRecording && isPaused
-                  ? "cursor-grab active:cursor-grabbing"
-                  : ""
-              }`}
-              style={{
-                left: `calc(50% - ${chipWidthPct}%)`,
-                width: `${chipWidthPct}%`,
-              }}
-            >
-              <div className="absolute left-0 right-0 top-0 z-20">
-                <div className="relative flex items-center gap-1.5 border-b border-[#8E9092] bg-[#A1A3A5] px-3 pb-1.5 pt-2">
-                  <GripVertical
-                    className={`h-3 w-3 shrink-0 text-[#262626] ${isRecording && isPaused ? "cursor-grab" : ""}`}
-                  />
-                  <button
-                    type="button"
-                    className="shrink-0 cursor-pointer border-0 bg-transparent p-0 text-inherit"
-                    aria-label="Rename segment"
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openPopover(
-                        "live",
-                        pendingName || title || "[Untitled]",
-                        e.currentTarget,
-                      );
-                    }}
-                  >
-                    <Mic className="h-3 w-3 text-[#262626]" />
-                  </button>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    className="max-w-[200px] cursor-pointer truncate text-xs font-semibold tracking-tight text-[#262626]"
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openPopover(
-                        "live",
-                        pendingName || title || "[Untitled]",
-                        e.currentTarget,
-                      );
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        openPopover(
-                          "live",
-                          pendingName || title || "[Untitled]",
-                          e.currentTarget,
-                        );
-                      }
-                    }}
-                  >
-                    {pendingName || title || "[Untitled]"}
-                  </span>
-                  <div className="flex-1" />
-                  <span className="font-mono text-[10px] tracking-tight text-[#262626]">
-                    {formatTimer(duration)}
-                  </span>
-                  {activePopover === "live" && (
-                    <SegmentPopover id="live" duration={duration} />
-                  )}
-                </div>
-              </div>
-
-              <div className="absolute inset-x-0 bottom-0 top-9 z-10 overflow-hidden rounded-bl-lg bg-[#E3E3E4]">
-                <canvas
-                  ref={canvasRef}
-                  className="block h-full min-h-10 w-full"
-                  aria-hidden
+            <div className="pointer-events-auto absolute left-0 right-0 top-0 z-20">
+              <div
+                className={`relative flex items-center gap-1.5 border-b border-[#8E9092] bg-[#A1A3A5] px-3 pb-1.5 pt-2 rounded-t-lg ${
+                  isRecording && isPaused
+                    ? "cursor-grab active:cursor-grabbing"
+                    : ""
+                }`}
+              >
+                <GripVertical
+                  className={`h-3 w-3 shrink-0 text-[#262626] ${isRecording && isPaused ? "cursor-grab" : ""}`}
                 />
+                <button
+                  type="button"
+                  className="shrink-0 cursor-pointer border-0 bg-transparent p-0 text-inherit"
+                  aria-label="Rename segment"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openPopover(
+                      "live",
+                      pendingName || title || "[Untitled]",
+                      e.currentTarget,
+                    );
+                  }}
+                >
+                  <Mic className="h-3 w-3 text-[#262626]" />
+                </button>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="max-w-[200px] cursor-pointer truncate text-xs font-semibold tracking-tight text-[#262626]"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openPopover(
+                      "live",
+                      pendingName || title || "[Untitled]",
+                      e.currentTarget,
+                    );
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openPopover(
+                        "live",
+                        pendingName || title || "[Untitled]",
+                        e.currentTarget,
+                      );
+                    }
+                  }}
+                >
+                  {pendingName || title || "[Untitled]"}
+                </span>
+                <div className="flex-1" />
+                <span className="font-mono text-[10px] tracking-tight text-[#262626]">
+                  {formatTimer(duration)}
+                </span>
+                {activePopover === "live" && (
+                  <SegmentPopover id="live" duration={duration} />
+                )}
               </div>
+            </div>
+
+            <div className="absolute inset-x-0 bottom-0 top-9 z-10 overflow-hidden rounded-b-lg bg-[#E3E3E4]">
+              <canvas
+                ref={canvasRef}
+                className="block h-full min-h-10 w-full"
+                aria-hidden
+              />
             </div>
           </div>
         ) : orderedSegments.length > 0 ? (
-          /* ── STATE 3: COMPLETED — proportional segment chips ── */
-          <div className="absolute inset-2 flex items-stretch gap-1 z-10 overflow-x-auto no-scrollbar">
-            {orderedSegments.map((seg, index) => (
-              <div
-                key={seg._id}
-                draggable={!isReordering}
-                onDragStart={(e) => handleDragStart(e, index)}
-                onDragOver={(e) => handleDragOver(e, index)}
-                onDrop={(e) => handleDrop(e, index)}
-                onDragEnd={handleDragEnd}
-                className={`
-                                    relative flex min-w-[140px] cursor-grab select-none flex-col overflow-hidden rounded-lg border
-                                    border-[#C6C6C7] shadow-sm
-                                    transition-all duration-150 active:cursor-grabbing
-                                    ${
-                                      playbackSegmentId &&
-                                      String(playbackSegmentId) ===
-                                        String(seg._id)
-                                        ? "z-[25] bg-[#ECECED]"
-                                        : "bg-[#E3E3E4] hover:bg-[#ECECED]"
-                                    }
-                                    ${
-                                      dragOverIndex === index &&
-                                      dragIndex !== index
-                                        ? "z-20 scale-[1.01] border-primary ring-2 ring-primary/20"
-                                        : ""
-                                    }
-                                    ${dragIndex === index ? "opacity-40 grayscale" : "opacity-100"}
-                                `}
-                style={{
-                  flex: `${seg.duration || 1} 1 0%`,
-                }}
-              >
-                {markers
-                  .filter((m) => {
-                    const st = Number(seg.startTime) || 0;
-                    const en =
-                      seg.endTime != null && seg.endTime !== ""
-                        ? Number(seg.endTime)
-                        : st + (Number(seg.duration) || 0);
-                    return m.timestamp >= st && m.timestamp <= en;
-                  })
-                  .map((m) => {
-                    const st = Number(seg.startTime) || 0;
-                    const dur = Number(seg.duration) || 1;
-                    const pct = dur > 0 ? ((m.timestamp - st) / dur) * 100 : 0;
-                    return (
-                      <div
-                        key={m.id}
-                        className="pointer-events-none absolute inset-y-0 z-30 w-0.5 bg-green-500"
-                        style={{ left: `${pct}%` }}
-                      />
-                    );
-                  })}
-                {/* Chip header */}
-                <div className="relative flex shrink-0 items-center gap-1.5 border-b border-[#8E9092] bg-[#A1A3A5] px-2.5 pb-1 pt-2 z-10">
-                  <GripVertical className="h-3 w-3 text-[#262626]" />
-                  <button
-                    type="button"
-                    className="shrink-0 cursor-pointer border-0 bg-transparent p-0 text-inherit"
-                    aria-label="Rename segment"
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openPopover(
-                        seg._id,
-                        seg.name || "[Untitled]",
-                        e.currentTarget,
-                      );
-                    }}
-                  >
-                    <Mic className="h-3 w-3 text-[#262626]" />
-                  </button>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    className="truncate text-[11px] font-semibold text-[#262626] cursor-pointer"
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openPopover(
-                        seg._id,
-                        seg.name || "[Untitled]",
-                        e.currentTarget,
-                      );
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        openPopover(
-                          seg._id,
-                          seg.name || "[Untitled]",
-                          e.currentTarget,
-                        );
-                      }
-                    }}
-                  >
-                    {seg.name || "[Untitled]"}
-                  </span>
-                  <div className="flex-1" />
-                  <span className="font-mono text-[10px] text-[#262626]">
-                    {formatTimer(seg.duration)}
-                  </span>
-                  {activePopover === seg._id && (
-                    <SegmentPopover
-                      id={seg._id}
-                      duration={seg.duration}
-                      createdAt={
-                        seg.createdAt
-                          ? new Date(seg.createdAt).toLocaleString("en-GB", {
-                              day: "2-digit",
-                              month: "short",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                              hour12: true,
-                            })
-                          : undefined
-                      }
-                    />
-                  )}
-                </div>
-
-                <div className="flex flex-1 items-center justify-center bg-[#E3E3E4] px-2 pb-1.5 pt-0.5">
+          /* ── STATE 3: DAW-style — fixed center playhead, track translateX, width ∝ duration ── */
+          <div
+            ref={state3ViewportRef}
+            className="absolute inset-2 z-10 overflow-hidden rounded-lg"
+          >
+            <div
+              ref={state3TrackRef}
+              className="absolute left-0 top-2 bottom-2 flex flex-nowrap items-stretch gap-1 will-change-transform"
+            >
+              {state3TrackLayout.map(
+                ({ seg, timelineStart, durationSec, widthPx }, index) => {
+                  const frozen = state3FrozenLayers[index];
+                  return (
                   <div
-                    className="flex h-full w-full items-center justify-center overflow-hidden"
-                    style={{ gap: `${GAP_CSS}px` }}
+                    key={seg._id}
+                    draggable={!isReordering}
+                    onDragStart={(e) => handleDragStart(e, index)}
+                    onDragOver={(e) => handleDragOver(e, index)}
+                    onDrop={(e) => handleDrop(e, index)}
+                    onDragEnd={handleDragEnd}
+                    className={`
+                                    relative box-border flex flex-none cursor-grab select-none flex-col overflow-hidden rounded-lg border
+                                    border-[#C6C6C7] bg-[#E3E3E4] shadow-sm hover:bg-[#ECECED]
+                                    active:cursor-grabbing
+                                    ${
+                                      dragIndex === index ? "opacity-40 grayscale" : ""
+                                    }
+                                `}
+                    style={{
+                      width: widthPx,
+                      minWidth: widthPx,
+                      maxWidth: widthPx,
+                      flexShrink: 0,
+                      flexGrow: 0,
+                    }}
                   >
-                    {Array.from({ length: 80 }).map((_, i) => {
-                      const seed = seg._id.charCodeAt(i % seg._id.length);
-                      const h =
-                        22 +
-                        Math.abs(Math.sin(i * 0.55 + seed * 0.02)) * 48 +
-                        (seed % 14);
-                      return (
-                        <div
-                          key={i}
-                          className="max-h-[92%] shrink-0 rounded-[1px]"
-                          style={{
-                            width: `${BAR_W_CSS}px`,
-                            minWidth: `${BAR_W_CSS}px`,
-                            height: `${h}%`,
-                            backgroundColor: BAR_FILL,
-                          }}
+                    {(playbackSegmentId &&
+                      String(playbackSegmentId) === String(seg._id)) ||
+                    (dragOverIndex === index && dragIndex !== index) ? (
+                      <div
+                        className="pointer-events-none absolute inset-0 z-[28] rounded-[inherit]"
+                        aria-hidden
+                        style={{
+                          boxShadow:
+                            playbackSegmentId &&
+                            String(playbackSegmentId) === String(seg._id)
+                              ? "inset 0 0 0 2px rgba(28, 28, 146, 0.48)"
+                              : "inset 0 0 0 2px rgba(28, 28, 146, 0.22)",
+                        }}
+                      />
+                    ) : null}
+                    {frozen.markersHere.map((m) => {
+                        const pct =
+                          durationSec > 0
+                            ? ((m.timestamp - timelineStart) / durationSec) *
+                              100
+                            : 0;
+                        return (
+                          <div
+                            key={m.id}
+                            className="pointer-events-none absolute inset-y-0 z-30 w-0.5 bg-green-500"
+                            style={{ left: `${pct}%` }}
+                          />
+                        );
+                      })}
+                    <div className="relative flex shrink-0 items-center gap-1.5 border-b border-[#8E9092] bg-[#A1A3A5] px-2.5 pb-1 pt-2 z-10">
+                      <GripVertical className="h-3 w-3 text-[#262626]" />
+                      <button
+                        type="button"
+                        className="shrink-0 cursor-pointer border-0 bg-transparent p-0 text-inherit"
+                        aria-label="Rename segment"
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openPopover(
+                            seg._id,
+                            seg.name || "[Untitled]",
+                            e.currentTarget,
+                          );
+                        }}
+                      >
+                        <Mic className="h-3 w-3 text-[#262626]" />
+                      </button>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        className="truncate text-[11px] font-semibold text-[#262626] cursor-pointer"
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openPopover(
+                            seg._id,
+                            seg.name || "[Untitled]",
+                            e.currentTarget,
+                          );
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openPopover(
+                              seg._id,
+                              seg.name || "[Untitled]",
+                              e.currentTarget,
+                            );
+                          }
+                        }}
+                      >
+                        {seg.name || "[Untitled]"}
+                      </span>
+                      <div className="flex-1" />
+                      <span className="font-mono text-[10px] text-[#262626]">
+                        {formatTimer(seg.duration)}
+                      </span>
+                      {activePopover === seg._id && (
+                        <SegmentPopover
+                          id={seg._id}
+                          duration={seg.duration}
+                          createdAt={
+                            seg.createdAt
+                              ? new Date(seg.createdAt).toLocaleString(
+                                  "en-GB",
+                                  {
+                                    day: "2-digit",
+                                    month: "short",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                    hour12: true,
+                                  },
+                                )
+                              : undefined
+                          }
                         />
-                      );
-                    })}
+                      )}
+                    </div>
+
+                    <div className="relative flex min-h-0 flex-1 flex-col items-stretch justify-start bg-[#E3E3E4] pb-1.5 pt-0.5">
+                      <div className="flex h-full min-h-0 w-full flex-1 items-stretch gap-px overflow-hidden">
+                        {frozen.bars}
+                      </div>
+                      {playbackSegmentId &&
+                        String(playbackSegmentId) === String(seg._id) && (
+                          <State3ActivePlaybackProgress
+                            timelineStart={timelineStart}
+                            durationSec={durationSec}
+                            segmentId={String(seg._id)}
+                          />
+                        )}
+                    </div>
                   </div>
-                </div>
-              </div>
-            ))}
+                  );
+                },
+              )}
+            </div>
+            {(segments?.length ?? 0) > 0 && segments?.some((s) => s.fileUrl) && (
+              <div
+                className="pointer-events-none absolute left-1/2 top-0 z-[100002] -translate-x-1/2"
+                style={{
+                  top: 0,
+                  bottom: 0,
+                  width: 2,
+                  backgroundColor: "#FF0000",
+                  zIndex: 99999,
+                  opacity: 1,
+                  visibility: "visible",
+                  boxShadow: "0 0 6px 1px rgba(255,0,0,0.85)",
+                }}
+              />
+            )}
           </div>
         ) : (
           /* ── STATE 1: EMPTY ── */
@@ -814,6 +1045,24 @@ const StaticWaveform = ({ mediaStream, pendingName, onPendingNameChange }) => {
             </div>
           </div>
         )}
+        {
+          /* Red playhead — live recording; fixed at center (STATE 2) */
+        }
+        {
+          isLive && (
+            <div
+              className="pointer-events-none absolute left-1/2 top-0 bottom-0 z-[100002] -translate-x-1/2"
+              style={{
+                width: 2,
+                backgroundColor: "#FF0000",
+                zIndex: 99999,
+                opacity: 1,
+                visibility: "visible",
+                boxShadow: "0 0 6px 1px rgba(255,0,0,0.85)",
+              }}
+            />
+          )
+        }
       </div>
 
       {isLive && (

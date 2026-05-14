@@ -19,9 +19,9 @@ const ConversationContent = ({ slug }) => {
 
   const isProcessing = conversation?.status === "processing";
 
-  if (isLoading) {
-    return <ConversationRouteSkeleton viewMode={viewMode} />;
-  }
+  // if (isLoading) {
+  //   return <ConversationRouteSkeleton viewMode={viewMode} />;
+  // }
 
   return (
     <div className="w-full h-full flex overflow-hidden">

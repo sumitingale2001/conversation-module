@@ -46,6 +46,9 @@ const useConversationStore = create((set, get) => ({
   playbackSegmentId: null,
   playbackBlockId: null,
 
+  /** HTML5 audio metadata durations — must match STATE 3 chip widths for playback math */
+  segmentMetaDurationById: {},
+
   // --- 5. ACTIONS ---
 
   /**
@@ -74,6 +77,7 @@ const useConversationStore = create((set, get) => ({
             playbackRate: 1,
             playbackSegmentId: null,
             playbackBlockId: null,
+            segmentMetaDurationById: {},
           }
         : {}),
     });
@@ -112,6 +116,21 @@ const useConversationStore = create((set, get) => ({
       ...updates,
     }));
   },
+
+  setSegmentMetaDuration: (segmentId, seconds) =>
+    set((state) => {
+      const id = segmentId != null ? String(segmentId) : "";
+      if (!id || !Number.isFinite(seconds) || seconds <= 0) return state;
+      if (state.segmentMetaDurationById[id] === seconds) return state;
+      return {
+        segmentMetaDurationById: {
+          ...state.segmentMetaDurationById,
+          [id]: seconds,
+        },
+      };
+    }),
+
+  clearSegmentMetaDurations: () => set({ segmentMetaDurationById: {} }),
 
   // --- 6. UI ACTIONS (BACKWARD COMPATIBILITY) ---
   setViewMode: (viewMode) => set({ viewMode }),

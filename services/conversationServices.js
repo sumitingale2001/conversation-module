@@ -246,11 +246,12 @@ export const conversationServices = {
     }
   },
 
-  triggerTranscription: async ({ conversationId, workspaceId }) => {
+  triggerTranscription: async ({ conversationId, workspaceId, segmentId }) => {
     try {
       const { data } = await apiInstance.post("/transcript/transcribe", {
         conversationId,
         workspaceId,
+        ...(segmentId ? { segmentId } : {}),
       });
       return data;
     } catch (err) {
