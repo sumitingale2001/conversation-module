@@ -1171,7 +1171,6 @@ const StaticWaveform = ({
   };
 
   const showTagHoverPreview =
-    isLive &&
     tagHoverAnchor.markerId &&
     tagHoverAnchor.el &&
     tagMarkerAnchor.markerId !== tagHoverAnchor.markerId;
@@ -1382,12 +1381,57 @@ const StaticWaveform = ({
                             ? ((m.timestamp - timelineStart) / durationSec) *
                               100
                             : 0;
+                        const leftPct = `${pct}%`;
                         return (
-                          <div
-                            key={m.id}
-                            className="pointer-events-none absolute inset-y-0 z-30 w-0.5 bg-green-500"
-                            style={{ left: `${pct}%` }}
-                          />
+                          <React.Fragment key={m.id}>
+                            <div
+                              className="pointer-events-none absolute inset-y-0 z-[35] w-[2px] bg-green-500"
+                              style={{
+                                left: leftPct,
+                                transform: "translateX(-50%)",
+                                boxShadow:
+                                  "0 0 3px rgba(34, 197, 94, 0.55), 0 0 1px rgba(22, 163, 74, 0.9)",
+                              }}
+                              aria-hidden
+                            />
+                            <button
+                              type="button"
+                              className="pointer-events-auto absolute top-0.5 z-[44] flex h-7 w-7 items-center justify-center rounded-sm border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-green-500/50"
+                              style={{
+                                left: leftPct,
+                                transform: "translateX(-50%)",
+                              }}
+                              aria-label="Edit bookmark tags"
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onMouseEnter={(e) => {
+                                clearTagHoverTimer();
+                                if ((m.tags?.length ?? 0) === 0) return;
+                                if (tagMarkerAnchor.markerId === m.id) return;
+                                setTagHoverAnchor({
+                                  markerId: m.id,
+                                  el: e.currentTarget,
+                                });
+                              }}
+                              onMouseLeave={() => scheduleTagHoverClose()}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                clearTagHoverTimer();
+                                setTagHoverAnchor({
+                                  markerId: null,
+                                  el: null,
+                                });
+                                setTagMarkerAnchor({
+                                  markerId: m.id,
+                                  el: e.currentTarget,
+                                });
+                              }}
+                            >
+                              <Diamond
+                                className="h-3.5 w-3.5 fill-green-500 text-green-500 drop-shadow-[0_1px_1px_rgba(0,0,0,0.12)]"
+                                strokeWidth={2}
+                              />
+                            </button>
+                          </React.Fragment>
                         );
                       })}
                       <div className="relative flex shrink-0 items-center gap-1.5 border-b border-[#8E9092] bg-[#A1A3A5] px-2.5 pb-1 pt-2 z-10">
@@ -1527,7 +1571,7 @@ const StaticWaveform = ({
         )}
       </div>
 
-      {isLive && (
+      {(isLive || orderedSegments.length > 0) && (
         <>
           <BookmarkTagsHoverPopover
             open={Boolean(tagHoverAnchor.el && tagHoverListForPopper.length)}

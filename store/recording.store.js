@@ -199,6 +199,74 @@ export const useRecordingStore = create((set, get) => {
         }));
     },
 
+    /**
+     * After adding a tag from the transcript block menu, show the same bookmark on the
+     * waveform (green marker). One marker per block; tags accumulate on repeat adds.
+     */
+    upsertTranscriptBlockWaveformMarker: ({
+        blockId,
+        timestampSec,
+        label,
+        tagDefId,
+        colorHex,
+    }) => {
+        const bid = String(blockId || "").trim();
+        const labelTrim = String(label || "").trim();
+        if (!bid || !Number.isFinite(timestampSec) || !labelTrim) return;
+
+        const markerId = `tb:${bid}`;
+        const type = labelTrim.toLowerCase() === "ask" ? "ask" : "recheck";
+        const clientId =
+            typeof crypto !== "undefined" && crypto.randomUUID
+                ? crypto.randomUUID()
+                : `t-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const tagEntry = {
+            clientId,
+            label: labelTrim,
+            type,
+            ...(colorHex ? { colorHex } : {}),
+            ...(tagDefId ? { tagDefId: String(tagDefId) } : {}),
+        };
+
+        set((state) => {
+            const list = state.markers || [];
+            const idx = list.findIndex(
+                (m) =>
+                    String(m.id) === markerId ||
+                    String(m.transcriptBlockId || "") === bid,
+            );
+
+            if (idx >= 0) {
+                const m = list[idx];
+                const existing = m.tags || [];
+                if (existing.some((t) => t.label?.trim() === labelTrim)) {
+                    return state;
+                }
+                const next = [...list];
+                next[idx] = {
+                    ...m,
+                    id: markerId,
+                    transcriptBlockId: bid,
+                    timestamp: timestampSec,
+                    tags: [...existing, tagEntry],
+                };
+                return { markers: next };
+            }
+
+            return {
+                markers: [
+                    ...list,
+                    {
+                        id: markerId,
+                        transcriptBlockId: bid,
+                        timestamp: timestampSec,
+                        tags: [tagEntry],
+                    },
+                ],
+            };
+        });
+    },
+
     clearMarkers: () => set({ markers: [] }),
 
     setPendingBookmarkSync: (segmentId, markers) => {

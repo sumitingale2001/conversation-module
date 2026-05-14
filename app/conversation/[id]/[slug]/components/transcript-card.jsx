@@ -499,6 +499,16 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
     const normalized = (raw || "").trim();
     if (!normalized || !tagPopoverState.blockId || !transcript?._id) return;
 
+    const blockId = tagPopoverState.blockId;
+    const block = transcript?.blocks?.find(
+      (b) => b._id.toString() === blockId,
+    );
+    const blockStartMs = getBlockStartMs(block);
+    const timestampSec =
+      blockStartMs != null && Number.isFinite(blockStartMs)
+        ? blockStartMs / 1000
+        : null;
+
     const selectedTag = await conversationServices.ensureUserTagByName(
       userId,
       normalized,
@@ -509,7 +519,7 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
     await conversationServices.addTagToBlock({
       transcriptId: transcript._id,
       workspaceId,
-      blockId: tagPopoverState.blockId,
+      blockId,
       tagId: selectedTag._id,
     });
 
@@ -517,6 +527,15 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
       conversationId: conversation?._id,
       workspaceId,
     });
+
+    if (timestampSec != null) {
+      useRecordingStore.getState().upsertTranscriptBlockWaveformMarker({
+        blockId,
+        timestampSec,
+        label: normalized,
+        tagDefId: selectedTag._id?.toString?.(),
+      });
+    }
   };
 
   const handlePlayBlock = (block) => {
