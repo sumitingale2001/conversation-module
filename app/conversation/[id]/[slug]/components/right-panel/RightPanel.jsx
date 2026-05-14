@@ -18,6 +18,23 @@ import ManagePresetModal from "./preset/ManagePresetModal";
 import PresetFormModal from "./preset/PresetFormModal";
 import { userId, workspaceId } from "@/utils/conversation.utils";
 
+/** Stable string id for tab selection and merges (API may use `id`, BSON `$oid`, etc.). */
+function pageIdStr(pageOrId) {
+  if (pageOrId == null) return "";
+  if (typeof pageOrId === "string" || typeof pageOrId === "number") {
+    return String(pageOrId);
+  }
+  if (typeof pageOrId === "object") {
+    const raw = pageOrId._id ?? pageOrId.id;
+    if (raw != null && typeof raw === "object" && raw.$oid != null) {
+      return String(raw.$oid);
+    }
+    if (raw != null) return String(raw);
+    if (pageOrId.$oid != null) return String(pageOrId.$oid);
+  }
+  return "";
+}
+
 const buildLocalPage = (payload, position) => ({
   _id: `local-${Date.now()}-${position}`,
   name: payload.name,
@@ -32,20 +49,52 @@ const buildLocalPage = (payload, position) => ({
   updatedAt: new Date().toISOString(),
 });
 
+/** Server returned at least one persisted page (not only the client fallback summary). */
+function incomingHasPersistedPages(incoming) {
+  return incoming.some((p) => {
+    const id = pageIdStr(p);
+    return id && id !== "local-summary" && !id.startsWith("local-");
+  });
+}
+
+/** Drop optimistic `local-*` row when the server list already has the same page (race-safe). */
+function isStaleLocalReplacedByServer(localPage, incoming) {
+  const id = pageIdStr(localPage);
+  if (!id.startsWith("local-") || id === "local-summary") return false;
+  if (!incomingHasPersistedPages(incoming)) return false;
+  const pos = Number(localPage.position) ?? 0;
+  const typ = localPage.type;
+  const name = localPage.name;
+  const preset = localPage.presetId ?? null;
+  return incoming.some((q) => {
+    const qid = pageIdStr(q);
+    if (!qid || qid.startsWith("local-")) return false;
+    if (q.type !== typ || q.name !== name) return false;
+    if ((Number(q.position) ?? 0) !== pos) return false;
+    if (preset != null && String(q.presetId ?? "") !== String(preset))
+      return false;
+    return true;
+  });
+}
+
 function mergePagesFromServer(prev, incoming) {
   const map = new Map();
   for (const p of incoming) {
-    map.set(String(p._id), p);
+    const k = pageIdStr(p);
+    if (!k) continue;
+    map.set(k, { ...p, _id: k });
   }
 
   const hasRealSummary = [...map.values()].some(
-    (x) => x.type === "summary" && String(x._id) !== "local-summary",
+    (x) => x.type === "summary" && pageIdStr(x) !== "local-summary",
   );
 
   for (const p of prev) {
-    const id = String(p._id);
+    const id = pageIdStr(p);
+    if (!id) continue;
     if (id === "local-summary" && hasRealSummary) continue;
-    if (!map.has(id)) map.set(id, p);
+    if (isStaleLocalReplacedByServer(p, incoming)) continue;
+    if (!map.has(id)) map.set(id, { ...p, _id: id });
   }
 
   return Array.from(map.values()).sort(
@@ -55,7 +104,10 @@ function mergePagesFromServer(prev, incoming) {
 
 const RightPanel = () => {
   const conversation = useConversationStore((state) => state.conversation);
-  const conversationId = conversation?._id;
+  const conversationIdStr =
+    conversation?._id === undefined || conversation?._id === null
+      ? ""
+      : String(conversation._id);
 
   // ✅ Single state object so pages and activePageId are ALWAYS updated
   // together in one setState call — eliminating any render where they
@@ -89,25 +141,33 @@ const RightPanel = () => {
   }, []);
 
   const selectPageTab = useCallback((pageId) => {
-    setState((prev) => ({ ...prev, activePageId: pageId }));
+    setState((prev) => ({ ...prev, activePageId: pageIdStr(pageId) }));
   }, []);
 
   useEffect(() => {
+    if (!workspaceId || !conversationIdStr) return;
     let ignore = false;
     (async () => {
-      const incomingPages = await getPages({ workspaceId, conversationId });
+      const incomingPages = await getPages({
+        workspaceId,
+        conversationId: conversationIdStr,
+      });
       if (ignore) return;
 
       setState((prev) => {
         const merged = mergePagesFromServer(prev.pages, incomingPages);
-        const intent = prev.activePageId;
+        const intent = pageIdStr(prev.activePageId);
 
         const intentExistsInMerged = merged.some(
-          (p) => String(p._id) === String(intent),
+          (p) => pageIdStr(p) === intent,
         );
-        const isLocalIntent = String(intent).startsWith("local-");
-        const shouldKeepIntent = intentExistsInMerged || isLocalIntent;
-        const nextActiveId = shouldKeepIntent ? intent : (merged[0]?._id ?? "");
+        // Do not keep `local-*` ids once the server replaces them (e.g. real Summary page);
+        // otherwise no tab matches `activePageId` and nothing looks selected.
+        const nextActiveId = intentExistsInMerged
+          ? intent
+          : pageIdStr(merged.find((p) => p.type === "summary")) ||
+            pageIdStr(merged[0]) ||
+            "";
 
         return { pages: merged, activePageId: nextActiveId };
       });
@@ -115,10 +175,12 @@ const RightPanel = () => {
     return () => {
       ignore = true;
     };
-  }, [workspaceId, conversationId]);
+  }, [workspaceId, conversationIdStr]);
 
   const activePage = useMemo(
-    () => pages.find((page) => page._id === activePageId) ?? null,
+    () =>
+      pages.find((page) => pageIdStr(page) === pageIdStr(activePageId)) ??
+      null,
     [pages, activePageId],
   );
 
@@ -128,25 +190,41 @@ const RightPanel = () => {
   }, [activePage]);
 
   const refreshPagesFromServer = useCallback(async () => {
-    if (!workspaceId || !conversationId) return;
-    const incomingPages = await getPages({ workspaceId, conversationId });
-    setState((prev) => ({
-      pages: mergePagesFromServer(prev.pages, incomingPages),
-      activePageId: prev.activePageId,
-    }));
-  }, [workspaceId, conversationId]);
+    if (!workspaceId || !conversationIdStr) return;
+    const incomingPages = await getPages({
+      workspaceId,
+      conversationId: conversationIdStr,
+    });
+    setState((prev) => {
+      const merged = mergePagesFromServer(prev.pages, incomingPages);
+      const intent = pageIdStr(prev.activePageId);
+      const still = merged.some((p) => pageIdStr(p) === intent);
+      const nextActiveId = still
+        ? intent
+        : pageIdStr(merged.find((p) => p.type === "summary")) ||
+          pageIdStr(merged[0]) ||
+          "";
+      return { pages: merged, activePageId: nextActiveId };
+    });
+  }, [workspaceId, conversationIdStr]);
 
   const persistPage = useCallback(
     (pageId, payload) => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
-        patchPage({ workspaceId, conversationId, pageId, payload });
+        patchPage({
+          workspaceId,
+          conversationId: conversationIdStr,
+          pageId,
+          payload,
+        });
       }, 800);
     },
-    [workspaceId, conversationId],
+    [workspaceId, conversationIdStr],
   );
 
   const createAndSelectPage = async (payload, { prepend = false } = {}) => {
+    if (!workspaceId || !conversationIdStr) return;
     let localPage;
     let apiPosition = 0;
 
@@ -157,22 +235,27 @@ const RightPanel = () => {
       const nextPages = prepend
         ? [localPage, ...prev.pages]
         : [...prev.pages, localPage];
-      return { pages: nextPages, activePageId: localPage._id };
+      return { pages: nextPages, activePageId: pageIdStr(localPage) };
     });
 
     const created = await createPage({
       workspaceId,
-      conversationId,
+      conversationId: conversationIdStr,
       payload: { ...payload, position: apiPosition },
       userId,
     });
 
-    if (created?._id) {
-      // ✅ Swap local → real page and update activePageId atomically
+    const cid = pageIdStr(created);
+    if (cid) {
+      const normalized = { ...created, _id: cid };
       setState((prev) => ({
-        pages: prev.pages.map((p) => (p._id === localPage._id ? created : p)),
-        activePageId: created._id,
+        pages: prev.pages.map((p) =>
+          pageIdStr(p) === pageIdStr(localPage) ? normalized : p,
+        ),
+        activePageId: cid,
       }));
+      // Do not refetch here: merge can run before the swap commit and re-add the
+      // optimistic `local-*` row alongside the server page. Swap + effect refetch is enough.
     }
   };
 
@@ -188,24 +271,24 @@ const RightPanel = () => {
 
   const handleRename = (nextName) => {
     if (!activePage) return;
-    if (activePage.type === "summary" || activePage._id === "local-summary") {
+    if (activePage.type === "summary" || pageIdStr(activePage) === "local-summary") {
       return;
     }
     setPages((prev) =>
       prev.map((page) =>
-        page._id === activePage._id
+        pageIdStr(page) === pageIdStr(activePage)
           ? { ...page, name: nextName, updatedAt: new Date().toISOString() }
           : page,
       ),
     );
-    persistPage(activePage._id, { name: nextName });
+    persistPage(pageIdStr(activePage), { name: nextName });
   };
 
   const handleEditorSave = (nextContent) => {
     if (!activePage) return;
     setPages((prev) =>
       prev.map((page) =>
-        page._id === activePage._id
+        pageIdStr(page) === pageIdStr(activePage)
           ? {
               ...page,
               content: nextContent,
@@ -214,27 +297,33 @@ const RightPanel = () => {
           : page,
       ),
     );
-    persistPage(activePage._id, { content: nextContent });
+    persistPage(pageIdStr(activePage), { content: nextContent });
   };
 
   const handleDeletePage = async () => {
     if (!activePage || pages.length <= 1) return;
-    const pageId = activePage._id;
+    const pageId = pageIdStr(activePage);
     const isLocalOnly = String(pageId).startsWith("local-");
-    if (workspaceId && conversationId && !isLocalOnly) {
-      const ok = await deletePage({ workspaceId, conversationId, pageId });
+    if (workspaceId && conversationIdStr && !isLocalOnly) {
+      const ok = await deletePage({
+        workspaceId,
+        conversationId: conversationIdStr,
+        pageId,
+      });
       if (!ok) return;
     }
     setState((prev) => {
-      const nextPages = prev.pages.filter((page) => page._id !== pageId);
-      const fallback = nextPages[0]?._id || "";
+      const nextPages = prev.pages.filter(
+        (page) => pageIdStr(page) !== pageIdStr(pageId),
+      );
+      const fallback = pageIdStr(nextPages[0]) || "";
       return { pages: nextPages, activePageId: fallback };
     });
   };
 
   const tabBarProps = {
     pages,
-    activePageId: activePage?._id ?? activePageId,
+    activePageId: pageIdStr(activePageId),
     onTabClick: selectPageTab,
     onCreateCustomPage: () =>
       createAndSelectPage({ name: "New page", type: "custom", content: null }),
@@ -312,14 +401,14 @@ const RightPanel = () => {
         }}
       />
 
-      {activePage && workspaceId && conversationId ? (
+      {activePage && workspaceId && conversationIdStr ? (
         <LinkToCanvasModal
           open={linkCanvasOpen}
           onClose={() => setLinkCanvasOpen(false)}
           onSuccess={refreshPagesFromServer}
           workspaceId={workspaceId}
-          conversationId={conversationId}
-          pageId={String(activePage._id)}
+          conversationId={conversationIdStr}
+          pageId={pageIdStr(activePage)}
           pageName={activePage.name}
           existingCanvasLinks={existingCanvasLinks}
         />

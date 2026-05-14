@@ -1,4 +1,40 @@
 import apiInstance from "@/config/apiInstance";
+
+/** Mongo-style ObjectId from JSON, or plain string/number */
+function toPageIdString(value) {
+  if (value == null) return "";
+  if (typeof value === "string" || typeof value === "number") {
+    return String(value);
+  }
+  if (typeof value === "object" && value.$oid != null) {
+    return String(value.$oid);
+  }
+  return "";
+}
+
+/**
+ * Extract a page document from POST/GET envelopes (`data`, nested `page`, etc.).
+ */
+export function normalizePageFromApiEnvelope(body) {
+  if (body == null || typeof body !== "object") return null;
+  const inner = body.data !== undefined ? body.data : body;
+  let row = Array.isArray(inner) ? inner[0] : inner;
+  if (row != null && typeof row === "object" && !Array.isArray(row)) {
+    const nested =
+      row.page ??
+      row.document ??
+      row.summaryPage ??
+      row.result;
+    if (nested != null && typeof nested === "object" && !Array.isArray(nested)) {
+      row = nested;
+    }
+  }
+  if (!row || typeof row !== "object") return null;
+  const id = toPageIdString(row._id ?? row.id);
+  if (!id) return null;
+  return { ...row, _id: id };
+}
+
 export const createFallbackSummaryPage = () => ({
   _id: "local-summary",
   name: "Summary",
@@ -22,7 +58,10 @@ export const getPages = async ({ workspaceId, conversationId }) => {
     const { data } = await apiInstance.get(
       `/summary-page/workspaces/${workspaceId}/conversations/${conversationId}/pages`,
     );
-    const pages = Array.isArray(data?.data) ? data.data : [];
+    const rawList = Array.isArray(data?.data) ? data.data : [];
+    const pages = rawList
+      .map((p) => normalizePageFromApiEnvelope({ data: p }) ?? p)
+      .filter(Boolean);
     return pages.length > 0 ? pages : [createFallbackSummaryPage()];
   } catch (error) {
     console.warn(
@@ -75,7 +114,7 @@ export const createPage = async ({
       `/summary-page/workspaces/${workspaceId}/conversations/${conversationId}/pages`,
       { ...payload, userId, workspaceId },
     );
-    return data?.data || null;
+    return normalizePageFromApiEnvelope(data);
   } catch (error) {
     console.warn("[right-panel] createPage failed", error);
     return null;

@@ -16,12 +16,14 @@ const PageTabBar = ({
       <div className="min-w-0 max-w-full overflow-x-auto [&::-webkit-scrollbar]:hidden">
         <div className="flex min-w-max items-center gap-2">
           {pages.map((page) => {
-            const isActive = page._id === activePageId;
+            const pid = String(page._id ?? page.id ?? "");
+            const active = String(activePageId ?? "");
+            const isActive = pid !== "" && pid === active;
             return (
               <button
-                key={page._id}
+                key={pid}
                 type="button"
-                onClick={() => onTabClick(page._id)}
+                onClick={() => onTabClick(pid)}
                 className={`cursor-pointer rounded-full px-3 py-1.5 text-[12px] leading-[16px] transition-colors ${
                   isActive
                     ? "bg-[#EFEEFC] font-medium text-[#1C1C92]"
