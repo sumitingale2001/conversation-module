@@ -3,12 +3,12 @@
 import Image from "next/image";
 import { useState, useRef, useEffect } from "react";
 import EmojiPicker from "emoji-picker-react";
-import { useParams } from "next/navigation";
-import useRenameConversation from "../../../../hooks/use-rename-conversation";
-import useUpdateEmoji from "../../../../hooks/use-update-emoji";
-import useToggleStar from "../../../../hooks/use-toggle-star";
-import useConversationStore from "../../../../store/conversation.store";
-import { HeaderSkeleton } from "../../../../components/skeletons";
+import { useParams, usePathname } from "next/navigation";
+import useRenameConversation from "@/hooks/use-rename-conversation";
+import useUpdateEmoji from "@/hooks/use-update-emoji";
+import useToggleStar from "@/hooks/use-toggle-star";
+import useConversationStore from "@/store/conversation.store";
+import { HeaderSkeleton } from "@/components/skeletons";
 
 const EmojiAndTitleSection = () => {
   const conversation = useConversationStore((state) => state.conversation);
@@ -109,13 +109,49 @@ const EmojiAndTitleSection = () => {
   );
 };
 
+const getSlugFromPathname = (pathname) =>
+  pathname?.match(/\/conversation\/[^/]+\/([^/]+)/)?.[1] ?? null;
+
 const OtherOptions = () => {
-  const { conversation, viewMode, setViewMode } = useConversationStore();
+  const { conversation, viewMode, setViewMode, segments } =
+    useConversationStore();
   const isStarred = conversation?.isStarred || false;
   const { toggleStar } = useToggleStar();
   const params = useParams();
+  const pathname = usePathname();
   const conversationId = params?.id;
   const [isTogglingStar, setIsTogglingStar] = useState(false);
+
+  const slug = getSlugFromPathname(pathname);
+  const hasSavedSegments = (segments?.length ?? 0) > 0;
+  const isRightPanelDisabled =
+    slug === "instant" && !hasSavedSegments;
+
+  const handleLeftPanelClick = () => {
+    if (isRightPanelDisabled) {
+      setViewMode("left");
+      return;
+    }
+    // Left visible (split or left-only) → hide left; right-only → show both
+    if (viewMode === "left" || viewMode === "split") {
+      setViewMode("right");
+    } else {
+      setViewMode("split");
+    }
+  };
+
+  const handleRightPanelClick = () => {
+    if (isRightPanelDisabled) return;
+    // Right visible (split or right-only) → hide right; left-only → show both
+    if (viewMode === "right" || viewMode === "split") {
+      setViewMode("left");
+    } else {
+      setViewMode("split");
+    }
+  };
+
+  const isLeftPanelActive = viewMode === "left" || viewMode === "split";
+  const isRightPanelActive = viewMode === "right" || viewMode === "split";
 
   const handleToggleStar = async () => {
     if (!conversationId || isTogglingStar) return;
@@ -154,15 +190,25 @@ const OtherOptions = () => {
       />
       <div className="flex items-center gap-1 justify-center p-1 border border-gray-400 rounded-[8px]">
         <div
-          className={`flex items-center justify-center p-1 cursor-pointer rounded-md border transition-all duration-200 ${viewMode === "left" ? "border-gray-300 bg-gray-100 shadow-sm" : "border-transparent hover:bg-gray-50"}`}
-          onClick={() => setViewMode(viewMode === "left" ? "split" : "left")}
+          className={`flex items-center justify-center p-1 rounded-md border transition-all duration-200 ${
+            isLeftPanelActive
+              ? "border-gray-300 bg-gray-100 shadow-sm"
+              : "border-transparent hover:bg-gray-50"
+          } cursor-pointer`}
+          onClick={handleLeftPanelClick}
         >
           <Image src="/recording.svg" width={20} height={20} alt="recording" />
         </div>
         <span className="text-gray-400 select-none">|</span>
         <div
-          className={`flex items-center justify-center p-1 cursor-pointer rounded-md border transition-all duration-200 ${viewMode === "right" ? "border-gray-300 bg-gray-100 shadow-sm" : "border-transparent hover:bg-gray-50"}`}
-          onClick={() => setViewMode(viewMode === "right" ? "split" : "right")}
+          className={`flex items-center justify-center p-1 rounded-md border transition-all duration-200 ${
+            isRightPanelDisabled
+              ? "opacity-40 cursor-not-allowed border-transparent"
+              : isRightPanelActive
+                ? "border-gray-300 bg-gray-100 shadow-sm cursor-pointer"
+                : "border-transparent hover:bg-gray-50 cursor-pointer"
+          }`}
+          onClick={handleRightPanelClick}
         >
           <Image src="/media-file.svg" width={20} height={20} alt="file" />
         </div>

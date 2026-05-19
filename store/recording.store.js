@@ -1,4 +1,9 @@
 import { create } from 'zustand';
+import {
+    globalTimestampSecForBlock,
+    segmentIdFromEntity,
+    segmentRelativeSecForBlock,
+} from '@/hooks/segment-duration-for-timeline';
 
 /**
  * Recording Store
@@ -206,6 +211,8 @@ export const useRecordingStore = create((set, get) => {
     upsertTranscriptBlockWaveformMarker: ({
         blockId,
         timestampSec,
+        segmentId,
+        segmentRelativeSec,
         label,
         tagDefId,
         colorHex,
@@ -239,16 +246,22 @@ export const useRecordingStore = create((set, get) => {
             if (idx >= 0) {
                 const m = list[idx];
                 const existing = m.tags || [];
-                if (existing.some((t) => t.label?.trim() === labelTrim)) {
-                    return state;
-                }
+                const hasLabel = existing.some(
+                    (t) => t.label?.trim() === labelTrim,
+                );
                 const next = [...list];
                 next[idx] = {
                     ...m,
                     id: markerId,
                     transcriptBlockId: bid,
                     timestamp: timestampSec,
-                    tags: [...existing, tagEntry],
+                    ...(segmentId
+                        ? { transcriptSegmentId: String(segmentId) }
+                        : {}),
+                    ...(Number.isFinite(segmentRelativeSec)
+                        ? { segmentRelativeSec }
+                        : {}),
+                    tags: hasLabel ? existing : [...existing, tagEntry],
                 };
                 return { markers: next };
             }
@@ -260,11 +273,59 @@ export const useRecordingStore = create((set, get) => {
                         id: markerId,
                         transcriptBlockId: bid,
                         timestamp: timestampSec,
+                        ...(segmentId
+                            ? { transcriptSegmentId: String(segmentId) }
+                            : {}),
+                        ...(Number.isFinite(segmentRelativeSec)
+                            ? { segmentRelativeSec }
+                            : {}),
                         tags: [tagEntry],
                     },
                 ],
             };
         });
+    },
+
+    /**
+     * Rebuild `tb:*` waveform markers from transcript block tags (e.g. after
+     * recording finalization clears live bookmarks).
+     */
+    syncWaveformMarkersFromTranscript: ({
+        blocks,
+        segments,
+        tagLookup,
+        segmentMetaDurationById = {},
+    }) => {
+        if (!blocks?.length || !segments?.length) return;
+        const upsert = get().upsertTranscriptBlockWaveformMarker;
+        for (const block of blocks) {
+            if (block?.isDeleted || block?.isActive === false) continue;
+            const tagIds = block.tagIds || [];
+            if (!tagIds.length) continue;
+            const blockId = block._id?.toString?.();
+            if (!blockId) continue;
+            const segId = segmentIdFromEntity(block);
+            const timestampSec = globalTimestampSecForBlock(
+                block,
+                segments,
+                segmentMetaDurationById,
+            );
+            const segmentRelativeSec = segmentRelativeSecForBlock(block);
+            if (!Number.isFinite(timestampSec) || !segId) continue;
+            for (const tagId of tagIds) {
+                const key = tagId?.toString?.() || tagId;
+                const def = tagLookup?.[key];
+                if (!def?.label) continue;
+                upsert({
+                    blockId,
+                    timestampSec,
+                    segmentId: segId,
+                    segmentRelativeSec,
+                    label: def.label,
+                    tagDefId: def.id,
+                });
+            }
+        }
     },
 
     clearMarkers: () => set({ markers: [] }),

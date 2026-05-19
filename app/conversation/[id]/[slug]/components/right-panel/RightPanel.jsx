@@ -156,18 +156,10 @@ const RightPanel = () => {
 
       setState((prev) => {
         const merged = mergePagesFromServer(prev.pages, incomingPages);
-        const intent = pageIdStr(prev.activePageId);
-
-        const intentExistsInMerged = merged.some(
-          (p) => pageIdStr(p) === intent,
-        );
-        // Do not keep `local-*` ids once the server replaces them (e.g. real Summary page);
-        // otherwise no tab matches `activePageId` and nothing looks selected.
-        const nextActiveId = intentExistsInMerged
-          ? intent
-          : pageIdStr(merged.find((p) => p.type === "summary")) ||
-            pageIdStr(merged[0]) ||
-            "";
+        const nextActiveId =
+          pageIdStr(merged.find((p) => p.type === "summary")) ||
+          pageIdStr(merged[0]) ||
+          "";
 
         return { pages: merged, activePageId: nextActiveId };
       });
@@ -316,7 +308,11 @@ const RightPanel = () => {
       const nextPages = prev.pages.filter(
         (page) => pageIdStr(page) !== pageIdStr(pageId),
       );
-      const fallback = pageIdStr(nextPages[0]) || "";
+      const deletedIndex = prev.pages.findIndex(
+        (page) => pageIdStr(page) === pageIdStr(pageId),
+      );
+      const fallbackIndex = Math.max(0, deletedIndex - 1);
+      const fallback = pageIdStr(nextPages[fallbackIndex]) || "";
       return { pages: nextPages, activePageId: fallback };
     });
   };
@@ -396,7 +392,7 @@ const RightPanel = () => {
         mode="create"
         onClose={() => setCreatePresetOpen(false)}
         onSubmit={async (payload) => {
-          await createPreset({ workspaceId, payload });
+          await createPreset({ workspaceId, payload , userId});
           setCreatePresetOpen(false);
         }}
       />

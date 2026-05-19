@@ -16,7 +16,10 @@ import { useRecordingStore } from "@/store/recording.store";
 import { conversationServices } from "@/services/conversationServices";
 import useGetConversation from "@/hooks/use-get-conversation";
 import { effectiveTotalDuration } from "@/hooks/use-conversation-playback";
-import { segmentDurationSecForTimeline } from "@/hooks/segment-duration-for-timeline";
+import {
+  normalizeTimelineId,
+  segmentDurationSecForTimeline,
+} from "@/hooks/segment-duration-for-timeline";
 import { TIMELINE_PX_PER_SEC } from "@/hooks/timeline-constants";
 import {
   AddTagPopover,
@@ -630,7 +633,12 @@ const StaticWaveform = ({
   const state3FrozenLayers = useMemo(() => {
     return state3TrackLayout.map(
       ({ seg, timelineStart, durationSec, widthPx }) => {
+        const segKey = normalizeTimelineId(seg._id);
         const markersHere = markers.filter((m) => {
+          const mSeg = m.transcriptSegmentId
+            ? normalizeTimelineId(m.transcriptSegmentId)
+            : "";
+          if (mSeg && mSeg === segKey) return true;
           const en = timelineStart + durationSec;
           return (
             m.timestamp >= timelineStart - 1e-3 && m.timestamp <= en + 1e-3
@@ -1376,11 +1384,13 @@ const StaticWaveform = ({
                         />
                       ) : null}
                       {frozen.markersHere.map((m) => {
-                        const pct =
-                          durationSec > 0
-                            ? ((m.timestamp - timelineStart) / durationSec) *
-                              100
+                        const relSec = Number.isFinite(m.segmentRelativeSec)
+                          ? m.segmentRelativeSec
+                          : durationSec > 0
+                            ? m.timestamp - timelineStart
                             : 0;
+                        const pct =
+                          durationSec > 0 ? (relSec / durationSec) * 100 : 0;
                         const leftPct = `${pct}%`;
                         return (
                           <React.Fragment key={m.id}>

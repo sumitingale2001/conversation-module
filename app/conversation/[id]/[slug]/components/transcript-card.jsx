@@ -14,6 +14,12 @@ import {
 import useConversationStore from "@/store/conversation.store";
 import { conversationServices } from "@/services/conversationServices";
 import { flushPendingBookmarkSyncForSegment } from "@/services/bookmark-transcript-sync";
+import {
+  globalTimestampSecForBlock,
+  segmentDurationSecForTimeline,
+  segmentIdFromEntity,
+  segmentRelativeSecForBlock,
+} from "@/hooks/segment-duration-for-timeline";
 import apiInstance from "@/config/apiInstance";
 import useGetConversation from "@/hooks/use-get-conversation";
 import { useRecordingStore } from "@/store/recording.store";
@@ -59,6 +65,15 @@ const getBlockEndMs = (block) => {
     const n = Number(block.endTime);
     if (!Number.isNaN(n)) return n * 1000;
   }
+  return null;
+};
+
+/** Speaking-turn length for display beside the speaker label. */
+const getBlockDurationMs = (block) => {
+  const start = getBlockStartMs(block);
+  const end = getBlockEndMs(block);
+  if (start != null && end != null) return Math.max(0, end - start);
+  if (end != null) return Math.max(0, end);
   return null;
 };
 
@@ -269,6 +284,63 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
     });
     return map;
   }, [segments]);
+
+  const segmentMetaDurationById = useConversationStore(
+    (s) => s.segmentMetaDurationById,
+  );
+
+  /** Per-segment length for header (matches waveform chip widths). */
+  const segmentDurationLabelById = useMemo(() => {
+    const map = {};
+    const blocks = transcript?.blocks || [];
+    for (const seg of segments || []) {
+      const id = seg._id?.toString?.() ?? String(seg._id);
+      let sec = segmentDurationSecForTimeline(seg, segmentMetaDurationById);
+      const metaDur = segmentMetaDurationById[id];
+      const hasDecodedDur =
+        Number.isFinite(metaDur) && metaDur > 0.02;
+      const apiDur = Number(seg.duration);
+      if (
+        !hasDecodedDur &&
+        (!Number.isFinite(apiDur) || apiDur <= 0)
+      ) {
+        const segBlocks = blocks.filter(
+          (b) =>
+            !b.isDeleted &&
+            b.segmentId != null &&
+            b.segmentId.toString() === id,
+        );
+        if (segBlocks.length) {
+          const fromBlocks = segBlocks.reduce((max, b) => {
+            const end = getBlockEndMs(b);
+            return end != null ? Math.max(max, end / 1000) : max;
+          }, 0);
+          if (fromBlocks > sec) sec = fromBlocks;
+        }
+      }
+      map[id] = formatMs(Math.round(sec * 1000));
+    }
+    return map;
+  }, [segments, segmentMetaDurationById, transcript?.blocks]);
+
+  // Transcript tags survive `clearMarkers()` after recording; restore green waveform lines.
+  useEffect(() => {
+    if (isRecording) return;
+    if (!transcript?.blocks?.length || !segments?.length) return;
+    useRecordingStore.getState().syncWaveformMarkersFromTranscript({
+      blocks: transcript.blocks,
+      segments,
+      tagLookup: transcriptTagLookup,
+      segmentMetaDurationById,
+    });
+  }, [
+    isRecording,
+    transcript?._id,
+    transcript?.blocks,
+    segments,
+    transcriptTagLookup,
+    segmentMetaDurationById,
+  ]);
 
   const clearBlockEditError = () =>
     setBlockEditError({ blockId: null, message: "" });
@@ -503,11 +575,11 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
     const block = transcript?.blocks?.find(
       (b) => b._id.toString() === blockId,
     );
-    const blockStartMs = getBlockStartMs(block);
-    const timestampSec =
-      blockStartMs != null && Number.isFinite(blockStartMs)
-        ? blockStartMs / 1000
-        : null;
+    const timestampSec = globalTimestampSecForBlock(
+      block,
+      segments,
+      segmentMetaDurationById,
+    );
 
     const selectedTag = await conversationServices.ensureUserTagByName(
       userId,
@@ -528,10 +600,12 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
       workspaceId,
     });
 
-    if (timestampSec != null) {
+    if (Number.isFinite(timestampSec)) {
       useRecordingStore.getState().upsertTranscriptBlockWaveformMarker({
         blockId,
         timestampSec,
+        segmentId: segmentIdFromEntity(block),
+        segmentRelativeSec: segmentRelativeSecForBlock(block),
         label: normalized,
         tagDefId: selectedTag._id?.toString?.(),
       });
@@ -976,6 +1050,9 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
                 ? `Recorded ${getTimeAgo(segment.createdAt)}`
                 : "Recording in-progress";
 
+          const segmentDurationLabel =
+            segmentDurationLabelById[segment._id.toString()] ?? formatMs(0);
+
           const isPlaybackSegmentActive =
             Boolean(playbackSegmentId) &&
             String(playbackSegmentId) === String(segment._id);
@@ -1003,7 +1080,7 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
                     {title}
                   </div>
                   <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                    <span>{formatMs(segment.duration * 1000)}</span>
+                    <span>{segmentDurationLabel}</span>
                     <span>|</span>
                     <span>{statusLabel}</span>
                   </div>
@@ -1096,6 +1173,7 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
                           `unassigned-${block._id.toString()}`;
                         const isManualBlock = block?.isManual === true;
                         const blockStartMs = getBlockStartMs(block);
+                        const blockDurationMs = getBlockDurationMs(block);
                         const tags = (block.tagIds || [])
                           .map(
                             (tagId) =>
@@ -1121,8 +1199,12 @@ const TranscriptCard = ({ slug, pendingSegmentName = "" }) => {
                             {/* Timestamp or manual-block indicator */}
                             <div className="shrink-0 w-12 flex items-start justify-end pt-0.5">
                               {!isManualBlock ? (
-                                <span className="text-[11px] font-mono text-muted-foreground">
-                                  {formatMs(blockStartMs ?? 0)}
+                                <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
+                                  {formatMs(
+                                    blockDurationMs ??
+                                      blockStartMs ??
+                                      0,
+                                  )}
                                 </span>
                               ) : (
                                 <Image
